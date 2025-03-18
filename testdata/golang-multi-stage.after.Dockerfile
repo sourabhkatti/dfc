@@ -20,7 +20,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o app .
 
 # Install UPX for binary compression (optional)
-RUN apk add -U wget xz-utils
+RUN apk add -U wget xz
 RUN wget -P /tmp/ https://github.com/upx/upx/releases/download/v3.95/upx-3.95-amd64_linux.tar.xz
 RUN tar xvf /tmp/upx-3.95-amd64_linux.tar.xz -C /tmp
 RUN mv /tmp/upx-3.95-amd64_linux/upx /usr/local/bin/upx
