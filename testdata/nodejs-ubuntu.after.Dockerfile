@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_VERSION=16.x
 
 # Update and install dependencies
-RUN apk add -U build-base curl git gnupg python3 wget && \
+RUN apk add -U build-base curl git gnupg python-3 wget && \
     rm -rf /var/lib/apt/lists/*
 
 # Add Node.js repository and install
