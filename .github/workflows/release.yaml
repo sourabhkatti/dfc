@@ -43,5 +43,5 @@ jobs:
         set -x
         VERSION="${GITHUB_REF#refs/tags/})"
         REVISION="$(git rev-parse HEAD)"
-        export LDFLAGS="-buildid= -X main.Version=$VERSION main.Revision=$REVISION"
+        export LDFLAGS="-X main.Version=$VERSION -X main.Revision=$REVISION"
         goreleaser release --clean
