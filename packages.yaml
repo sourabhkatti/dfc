@@ -1,0 +1,20 @@
+# mapping of alpine packages to equivalent chainguard package(s)
+alpine: {}
+
+# mapping of debian packages name to equivalent chainguard package(s)
+debian:
+  build-essential:
+   - build-base
+
+  # Thing noticed in django build
+  libpq5:
+    - libpq
+  libc6-dev:
+    - glibc-dev
+  libpq-dev:
+    - postgresql-dev
+  zlib1g-dev:
+    - zlib-dev
+
+# mapping of fedora packages name to equivalent chainguard package(s)
+fedora: {}
