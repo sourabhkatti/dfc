@@ -7,7 +7,7 @@
 <p align="center">
 <b><code>d</code>ocker<code>f</code>ile <code>c</code>onverter</b>
 
-<p align="center">CLI to convert Dockerfiles to use Chainguard Images and APKs in FROM and RUN lines</p>
+<p align="center">CLI to convert Dockerfiles to use Chainguard Images and APKs in FROM and RUN lines etc.</p>
 
 </p>
 
