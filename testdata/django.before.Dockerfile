@@ -1,7 +1,7 @@
 # From https://github.com/django/djangoproject.com/blob/main/Dockerfile
 
 # pull official base image
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm@sha256:abc
 
 # set work directory
 WORKDIR /usr/src/app

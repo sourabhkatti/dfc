@@ -616,6 +616,24 @@ RUN echo hello world
 				},
 			},
 		},
+		{
+			name: "image with digest",
+			raw:  `FROM python:3.9-slim@sha256:123456abcdef`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `FROM python:3.9-slim@sha256:123456abcdef`,
+						Converted: `FROM cgr.dev/ORG/python:3.9-dev`,
+						Stage:     1,
+						From: &FromDetails{
+							Base:   "python",
+							Tag:    "3.9-slim",
+							Digest: "sha256:123456abcdef",
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range convertTests {

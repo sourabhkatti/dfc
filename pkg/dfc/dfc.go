@@ -386,9 +386,6 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 				if newTag != "" {
 					fromLine += ":" + newTag
 				}
-				if line.From.Digest != "" && !isUbuntuImage(line.From.Base) {
-					fromLine += "@" + line.From.Digest
-				}
 				if line.From.Alias != "" {
 					fromLine += " " + KeywordAs + " " + line.From.Alias
 				}
