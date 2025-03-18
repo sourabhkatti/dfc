@@ -1,7 +1,7 @@
 # dfc
 
 <p align="center">
-<img align="center" alt="tq" width="250" src="./dfc.png">
+<img align="center" alt="dfc" width="250" src="./dfc.png">
 </p>
 
 <p align="center">
@@ -187,7 +187,7 @@ For each `RUN` line in the Dockerfile, `dfc` attempts to detect the use of a kno
 If `dfc` has detected the use of a package manager and ended up converting a RUN line,
 then `USER root` will be appended under the last `FROM` line.
 
-In the future we plan to handle this more elegantly, but this is the currnt state.
+In the future we plan to handle this more elegantly, but this is the current state.
 
 ## JSON mode
 
@@ -235,7 +235,7 @@ Get list of package managers detected from RUN lines:
 dfc -j ./Dockerfile | jq -r '.lines[].run.manager' | grep -v null | sort -u
 ```
 
-Get all the packages intially detected during parsing:
+Get all the packages initially detected during parsing:
 
 ```sh
 dfc -j ./Dockerfile | jq -r '.lines[].run.packages' | grep '"' | cut -d'"' -f 2 | sort -u | xargs
