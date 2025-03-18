@@ -37,6 +37,11 @@ jobs:
         install-only: true
 
     - name: Release
-      run: make release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -x
+        VERSION="${GITHUB_REF#refs/tags/})"
+        REVISION="$(git rev-parse HEAD)"
+        export LDFLAGS="-buildid= -X main.Version=$VERSION main.Revision=$REVISION"
+        goreleaser release --clean

@@ -19,6 +19,14 @@ import (
 //go:embed packages.yaml
 var packagesYamlBytes []byte
 
+var (
+	// Version is the semantic version (added at compile time via -X main.Version=$VERSION)
+	Version string
+
+	// Revision is the git commit id (added at compile time via -X main.Revision=$REVISION)
+	Revision string
+)
+
 func main() {
 	// inspired by https://github.com/jonjohnsonjr/apkrane/blob/main/main.go
 	if err := cli().ExecuteContext(context.Background()); err != nil {
@@ -33,10 +41,19 @@ func cli() *cobra.Command {
 	var registry string
 	var mappingsFile string
 
+	v := "dev"
+	if Version != "" {
+		v = Version
+		if Revision != "" {
+			v += fmt.Sprintf(" (%s)", Revision)
+		}
+	}
+
 	cmd := &cobra.Command{
 		Use:     "dfc",
 		Example: "dfc <path_to_dockerfile>",
 		Args:    cobra.ExactArgs(1),
+		Version: v,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
