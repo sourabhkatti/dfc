@@ -29,6 +29,15 @@ const (
 	ManagerApt      Manager = "apt"
 )
 
+// User management commands and packages
+const (
+	CommandUserAdd  = "useradd"
+	CommandAddUser  = "adduser"
+	CommandGroupAdd = "groupadd"
+	CommandAddGroup = "addgroup"
+	PackageShadow   = "shadow"
+)
+
 // Install subcommands
 const (
 	SubcommandInstall = "install"
@@ -349,6 +358,9 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 		Lines: make([]*DockerfileLine, len(d.Lines)),
 	}
 
+	// Track packages installed per stage
+	stagePackages := make(map[int][]string)
+
 	// Convert each line
 	for i, line := range d.Lines {
 		// Create a deep copy of the line
@@ -397,7 +409,6 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 		// Process RUN commands
 		if line.Run != nil && line.Run.Shell != nil && line.Run.Shell.Before != nil {
 			beforeShell := line.Run.Shell.Before
-			modifiedShell := beforeShell
 
 			// Initialize RunDetails with Before shell
 			newLine.Run = &RunDetails{
@@ -406,8 +417,9 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 				},
 			}
 
-			// Second pass: modify commands
-			modified, distro, manager, packages, convertedShell, err := convertPackageManagerCommands(modifiedShell, opts.PackageMap)
+			// First check for package manager commands
+			modifiedPMCommands, distro, manager, packages, mappedPackages, afterShell, err :=
+				convertPackageManagerCommands(beforeShell, opts.PackageMap)
 			if err != nil {
 				return nil, err
 			}
@@ -415,9 +427,23 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 			newLine.Run.Manager = manager
 			newLine.Run.Packages = packages
 
+			// Add the mapped packages to the stage's package list
+			if len(mappedPackages) > 0 {
+				if _, exists := stagePackages[line.Stage]; !exists {
+					stagePackages[line.Stage] = []string{}
+				}
+				stagePackages[line.Stage] = append(stagePackages[line.Stage], mappedPackages...)
+			}
+
+			modifiedBusyboxCommands := false
+			modifiedBusyboxCommands, afterShell = convertBusyboxCommands(afterShell, stagePackages[line.Stage])
+
+			// Check if we modified anything (related to package managers or useradd/groupadd)
+			modifiedAnything := modifiedPMCommands || modifiedBusyboxCommands
+
 			// If we modified the shell command, set After and Converted
-			if modified {
-				newLine.Run.Shell.After = convertedShell
+			if modifiedAnything {
+				newLine.Run.Shell.After = afterShell
 
 				// Extract the original RUN directive from the raw line to preserve case
 				rawLine := line.Raw
@@ -430,10 +456,10 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 				if runIndex != -1 {
 					// Get the original case of the RUN directive
 					originalRunDirective := rawLine[runIndex : runIndex+len(runPrefix)]
-					newLine.Converted = originalRunDirective + convertedShell.String()
+					newLine.Converted = originalRunDirective + afterShell.String()
 				} else {
 					// Fallback if we can't find the directive (shouldn't happen)
-					newLine.Converted = DirectiveRun + " " + convertedShell.String()
+					newLine.Converted = DirectiveRun + " " + afterShell.String()
 				}
 			}
 		}
@@ -557,9 +583,9 @@ func isUbuntuImage(base string) bool {
 
 // convertPackageManagerCommands converts package manager commands in a shell command
 // to the Alpine equivalent (apk add)
-func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (bool, Distro, Manager, []string, *ShellCommand, error) {
+func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (bool, Distro, Manager, []string, []string, *ShellCommand, error) {
 	if shell == nil {
-		return false, "", "", nil, nil, nil
+		return false, "", "", nil, nil, nil, nil
 	}
 
 	// Determine which distro/package manager we're going to focus on
@@ -603,7 +629,7 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 
 	// If we have no packages to install, nothing to do
 	if len(packagesToInstall) == 0 || firstPMInstallIndex == -1 {
-		return false, distro, firstPM, nil, shell, nil
+		return false, distro, firstPM, nil, nil, shell, nil
 	}
 
 	// Sort and deduplicate packages
@@ -651,7 +677,7 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 		newParts[len(newParts)-1].Delimiter = ""
 	}
 
-	return true, distro, firstPM, packagesDetected, &ShellCommand{Parts: newParts}, nil
+	return true, distro, firstPM, packagesDetected, packagesToInstall, &ShellCommand{Parts: newParts}, nil
 }
 
 // Helper function to clone a shell part
@@ -666,4 +692,54 @@ func cloneShellPart(part *ShellPart) *ShellPart {
 		copy(newPart.Args, part.Args)
 	}
 	return newPart
+}
+
+// convertBusyboxCommands converts useradd and groupadd commands to adduser and addgroup and modifies the tar command syntax
+func convertBusyboxCommands(shell *ShellCommand, stagePackages []string) (bool, *ShellCommand) {
+	if shell == nil || len(shell.Parts) == 0 {
+		return false, shell
+	}
+
+	// Create new shell command to hold the converted parts
+	convertedParts := make([]*ShellPart, len(shell.Parts))
+	modified := false
+
+	// do not convert useradd/groupadd commands if shadow is installed
+	hasShadow := slices.Contains(stagePackages, PackageShadow)
+
+	// Process each shell part
+	for i, part := range shell.Parts {
+		// Check useradd / groupadd / tar commands and act appropriately
+		if part.Command == CommandUserAdd && !hasShadow {
+			convertedPart := ConvertUserAddToAddUser(part)
+			if convertedPart.Command != part.Command {
+				modified = true
+			}
+			convertedParts[i] = convertedPart
+		} else if part.Command == CommandGroupAdd && !hasShadow {
+			convertedPart := ConvertGroupAddToAddGroup(part)
+			if convertedPart.Command != part.Command {
+				modified = true
+			}
+			convertedParts[i] = convertedPart
+		} else if part.Command == CommandGNUTar {
+			convertedPart := ConvertGNUTarToBusyboxTar(part)
+			// Compare arguments to see if they changed
+			if !slices.Equal(convertedPart.Args, part.Args) {
+				modified = true
+				convertedParts[i] = convertedPart
+			} else {
+				convertedParts[i] = cloneShellPart(part)
+			}
+		} else {
+			// Copy any other commands unchanged
+			convertedParts[i] = cloneShellPart(part)
+		}
+	}
+
+	if modified {
+		return true, &ShellCommand{Parts: convertedParts}
+	}
+
+	return false, shell
 }
