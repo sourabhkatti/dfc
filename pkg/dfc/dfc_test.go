@@ -1087,6 +1087,60 @@ RUN echo hello world
 				},
 			},
 		},
+		{
+			name: "dynamic base image with ARG",
+			raw: `ARG BASE_IMAGE=debian:bookworm-slim
+FROM $BASE_IMAGE AS base`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `ARG BASE_IMAGE=debian:bookworm-slim`,
+						Converted: `ARG BASE_IMAGE=cgr.dev/ORG/` + DefaultChainguardBase + `:latest`,
+						Arg: &ArgDetails{
+							Name:         "BASE_IMAGE",
+							DefaultValue: `cgr.dev/ORG/` + DefaultChainguardBase + `:latest`,
+							UsedAsBase:   true,
+						},
+					},
+					{
+						Raw:   `FROM $BASE_IMAGE AS base`,
+						Stage: 1,
+						From: &FromDetails{
+							Base:        "$BASE_IMAGE",
+							Alias:       "base",
+							BaseDynamic: true,
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "dynamic base image with ARG, different syntax",
+			raw: `ARG BASE_IMAGE=debian:bookworm-slim
+FROM ${BASE_IMAGE} AS base`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `ARG BASE_IMAGE=debian:bookworm-slim`,
+						Converted: `ARG BASE_IMAGE=cgr.dev/ORG/` + DefaultChainguardBase + `:latest`,
+						Arg: &ArgDetails{
+							Name:         "BASE_IMAGE",
+							DefaultValue: `cgr.dev/ORG/` + DefaultChainguardBase + `:latest`,
+							UsedAsBase:   true,
+						},
+					},
+					{
+						Raw:   `FROM ${BASE_IMAGE} AS base`,
+						Stage: 1,
+						From: &FromDetails{
+							Base:        "${BASE_IMAGE}",
+							Alias:       "base",
+							BaseDynamic: true,
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range convertTests {

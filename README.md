@@ -189,6 +189,10 @@ then `USER root` will be appended under the last `FROM` line.
 
 In the future we plan to handle this more elegantly, but this is the current state.
 
+### `ARG` line modifications
+
+For each `ARG` line in the Dockerfile, `dfc` checks if the ARG is used as a base image in a subsequent `FROM` line. If it is, and the ARG has a default value that appears to be a base image, then `dfc` will modify the default value to use a Chainguard Image instead.
+
 ## Special considerations
 
 ### Busybox command syntax
