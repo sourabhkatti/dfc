@@ -2,6 +2,7 @@ package dfc
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -49,6 +50,7 @@ const (
 	DirectiveFrom = "FROM"
 	DirectiveRun  = "RUN"
 	DirectiveUser = "USER"
+	DirectiveArg  = "ARG"
 	KeywordAs     = "AS"
 )
 
@@ -58,6 +60,7 @@ const (
 	DefaultImageTag       = "latest-dev"
 	DefaultUser           = "root"
 	DefaultOrg            = "ORG"
+	DefaultChainguardBase = "chainguard-base"
 )
 
 // PackageManagerInfo holds metadata about a package manager
@@ -86,6 +89,14 @@ type DockerfileLine struct {
 	Stage     int          `json:"stage,omitempty"`
 	From      *FromDetails `json:"from,omitempty"`
 	Run       *RunDetails  `json:"run,omitempty"`
+	Arg       *ArgDetails  `json:"arg,omitempty"`
+}
+
+// ArgDetails holds details about an ARG directive
+type ArgDetails struct {
+	Name         string `json:"name,omitempty"`
+	DefaultValue string `json:"defaultValue,omitempty"`
+	UsedAsBase   bool   `json:"usedAsBase,omitempty"`
 }
 
 // FromDetails holds details about a FROM directive
@@ -243,6 +254,28 @@ func ParseDockerfile(ctx context.Context, content []byte) (*Dockerfile, error) {
 			}
 		}
 
+		// Handle ARG instructions (case-insensitive)
+		if strings.HasPrefix(upperInstruction, DirectiveArg+" ") {
+			// Extract the ARG part (everything after "ARG ")
+			argPartIdx := len(DirectiveArg + " ")
+			argPart := strings.TrimSpace(trimmedInstruction[argPartIdx:])
+
+			// Parse the ARG name and default value if present
+			var name, defaultValue string
+			if parts := strings.SplitN(argPart, "=", 2); len(parts) > 1 {
+				name = strings.TrimSpace(parts[0])
+				defaultValue = strings.TrimSpace(parts[1])
+			} else {
+				name = argPart
+			}
+
+			// Store the ARG details
+			dockerfileLine.Arg = &ArgDetails{
+				Name:         name,
+				DefaultValue: defaultValue,
+			}
+		}
+
 		// Handle RUN instructions (case-insensitive)
 		if strings.HasPrefix(upperInstruction, DirectiveRun+" ") {
 			// Extract the command part (everything after "RUN ")
@@ -351,6 +384,59 @@ type Options struct {
 // PackagesConfig represents the structure of packages.yaml
 type PackageMap map[Distro]map[string][]string
 
+// parseImageReference extracts base and tag from an image reference
+func parseImageReference(imageRef string) (base, tag string) {
+	// Check for tag
+	if tagParts := strings.Split(imageRef, ":"); len(tagParts) > 1 {
+		base = tagParts[0]
+		tag = tagParts[1]
+	} else {
+		base = imageRef
+	}
+	return base, tag
+}
+
+// convertImageReference handles the conversion of an image reference (base:tag) to a Chainguard equivalent
+func convertImageReference(base, tag string, isDynamic bool, opts Options) string {
+	// Handle the basename
+	baseFilename := filepath.Base(base)
+
+	// Special case for ubuntu/debian/etc - use chainguard-base instead
+	if isChainguardBaseEquivalent(baseFilename) {
+		baseFilename = DefaultChainguardBase
+		tag = "latest" // Always use latest tag for chainguard-base
+	}
+
+	// Build the full image reference with registry and organization
+	var newBase string
+
+	// If registry is specified, use registry/basename
+	if opts.Registry != "" {
+		newBase = opts.Registry + "/" + baseFilename
+	} else {
+		// Otherwise use DefaultRegistryDomain/org/basename
+		org := opts.Organization
+		if org == "" {
+			org = DefaultOrg
+		}
+		newBase = DefaultRegistryDomain + "/" + org + "/" + baseFilename
+	}
+
+	// Handle the tag
+	var newTag string
+	if tag != "latest" { // Skip tag conversion for 'latest'
+		newTag = convertImageTag(tag, isDynamic)
+	} else {
+		newTag = tag
+	}
+
+	// Combine into a single reference
+	if newTag != "" {
+		return newBase + ":" + newTag
+	}
+	return newBase
+}
+
 // Convert applies the conversion to the Dockerfile and returns a new converted Dockerfile
 func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, error) {
 	// Create a new Dockerfile for the converted content
@@ -360,6 +446,38 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 
 	// Track packages installed per stage
 	stagePackages := make(map[int][]string)
+
+	// Track ARGs that are used as base images
+	argNameToDockerfileLine := make(map[string]*DockerfileLine)
+	argsUsedAsBase := make(map[string]bool)
+
+	// First pass: collect all ARG definitions and identify which ones are used as base images
+	for _, line := range d.Lines {
+		if line.Arg != nil && line.Arg.Name != "" {
+			argNameToDockerfileLine[line.Arg.Name] = line
+		}
+
+		if line.From != nil && line.From.BaseDynamic {
+			// Check if the base contains a reference to an ARG
+			// Extract the ARG name from the dynamic reference (e.g., $BASE_IMAGE or ${BASE_IMAGE})
+			baseName := line.From.Base
+			if strings.HasPrefix(baseName, "$") {
+				// Handle both ${VAR} and $VAR formats
+				argName := baseName[1:] // Remove the '$'
+				if strings.HasPrefix(argName, "{") && strings.HasSuffix(argName, "}") {
+					argName = argName[1 : len(argName)-1] // Remove the '{}' brackets
+				}
+				argsUsedAsBase[argName] = true
+			}
+		}
+	}
+
+	// Mark the ARGs used as base
+	for argName := range argsUsedAsBase {
+		if line, exists := argNameToDockerfileLine[argName]; exists && line.Arg != nil {
+			line.Arg.UsedAsBase = true
+		}
+	}
 
 	// Convert each line
 	for i, line := range d.Lines {
@@ -381,28 +499,37 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 				TagDynamic:  line.From.TagDynamic,
 			}
 
-			// Apply FROM line conversion
+			// Apply FROM line conversion only for non-dynamic bases
 			if shouldConvertFromLine(line.From) {
-				newBase := convertBaseImage(line.From.Base, opts)
-
-				// Handle ubuntu images specially - use "latest" tag
-				var newTag string
-				if isUbuntuImage(line.From.Base) {
-					newTag = "latest"
-				} else {
-					newTag = convertImageTag(line.From.Tag, line.From.TagDynamic)
-				}
+				newImageRef := convertImageReference(line.From.Base, line.From.Tag, line.From.TagDynamic, opts)
 
 				// Create the converted FROM line
-				fromLine := DirectiveFrom + " " + newBase
-				if newTag != "" {
-					fromLine += ":" + newTag
-				}
+				fromLine := DirectiveFrom + " " + newImageRef
 				if line.From.Alias != "" {
 					fromLine += " " + KeywordAs + " " + line.From.Alias
 				}
 
 				newLine.Converted = fromLine
+			}
+		}
+
+		// Handle ARG lines that are used as base images
+		if line.Arg != nil && line.Arg.UsedAsBase && line.Arg.DefaultValue != "" {
+			// Parse the default value as a base image
+			base, tag := parseImageReference(line.Arg.DefaultValue)
+
+			// Convert the image reference
+			newDefaultValue := convertImageReference(base, tag, false, opts)
+
+			// Create the converted ARG line
+			argLine := DirectiveArg + " " + line.Arg.Name + "=" + newDefaultValue
+			newLine.Converted = argLine
+
+			// Copy the Arg structure
+			newLine.Arg = &ArgDetails{
+				Name:         line.Arg.Name,
+				DefaultValue: newDefaultValue,
+				UsedAsBase:   true,
 			}
 		}
 
@@ -524,35 +651,6 @@ func shouldConvertFromLine(from *FromDetails) bool {
 	return true
 }
 
-// convertBaseImage returns the converted base image
-func convertBaseImage(base string, opts Options) string {
-	// Extract the basename (part after the last slash)
-	var basename string
-	if lastSlash := strings.LastIndex(base, "/"); lastSlash != -1 {
-		basename = base[lastSlash+1:]
-	} else {
-		basename = base
-	}
-
-	// Special case for ubuntu - use chainguard-base instead
-	if basename == "ubuntu" {
-		basename = "chainguard-base"
-	}
-
-	// If registry is specified, use registry/basename
-	if opts.Registry != "" {
-		return opts.Registry + "/" + basename
-	}
-
-	// Otherwise use DefaultRegistryDomain/org/basename
-	org := opts.Organization
-	if org == "" {
-		org = DefaultOrg
-	}
-
-	return DefaultRegistryDomain + "/" + org + "/" + basename
-}
-
 // convertImageTag returns the converted image tag
 func convertImageTag(tag string, isDynamic bool) string {
 	if tag == "" {
@@ -568,17 +666,12 @@ func convertImageTag(tag string, isDynamic bool) string {
 	return tag + "-dev"
 }
 
-// isUbuntuImage checks if the base is ubuntu
-func isUbuntuImage(base string) bool {
+// isChainguardBaseEquivalent checks if the base is a chainguard base equivalent
+func isChainguardBaseEquivalent(base string) bool {
 	// Extract the basename (part after the last slash)
-	var basename string
-	if lastSlash := strings.LastIndex(base, "/"); lastSlash != -1 {
-		basename = base[lastSlash+1:]
-	} else {
-		basename = base
-	}
+	baseFilename := filepath.Base(base)
 
-	return basename == "ubuntu"
+	return baseFilename == "ubuntu" || baseFilename == "debian"
 }
 
 // convertPackageManagerCommands converts package manager commands in a shell command
@@ -694,45 +787,73 @@ func cloneShellPart(part *ShellPart) *ShellPart {
 	return newPart
 }
 
+// CommandConverter defines a function type for converting shell commands
+type CommandConverter func(*ShellPart) *ShellPart
+
+// CommandHandler represents a handler for a specific command conversion
+type CommandHandler struct {
+	Command             string
+	Converter           CommandConverter
+	SkipIfShadowPresent bool // If true, only convert when shadow is NOT installed
+}
+
 // convertBusyboxCommands converts useradd and groupadd commands to adduser and addgroup and modifies the tar command syntax
 func convertBusyboxCommands(shell *ShellCommand, stagePackages []string) (bool, *ShellCommand) {
 	if shell == nil || len(shell.Parts) == 0 {
 		return false, shell
 	}
 
+	// Define command handlers
+	commandHandlers := []CommandHandler{
+		{
+			Command:             CommandUserAdd,
+			Converter:           ConvertUserAddToAddUser,
+			SkipIfShadowPresent: true,
+		},
+		{
+			Command:             CommandGroupAdd,
+			Converter:           ConvertGroupAddToAddGroup,
+			SkipIfShadowPresent: true,
+		},
+		{
+			Command:   CommandGNUTar,
+			Converter: ConvertGNUTarToBusyboxTar,
+		},
+	}
+
 	// Create new shell command to hold the converted parts
 	convertedParts := make([]*ShellPart, len(shell.Parts))
 	modified := false
 
-	// do not convert useradd/groupadd commands if shadow is installed
+	// Check if shadow is installed
 	hasShadow := slices.Contains(stagePackages, PackageShadow)
 
 	// Process each shell part
 	for i, part := range shell.Parts {
-		// Check useradd / groupadd / tar commands and act appropriately
-		if part.Command == CommandUserAdd && !hasShadow {
-			convertedPart := ConvertUserAddToAddUser(part)
-			if convertedPart.Command != part.Command {
-				modified = true
+		converted := false
+
+		// Try each handler in the registry
+		for _, handler := range commandHandlers {
+			// Skip if this handler requires shadow checking and shadow is installed
+			if handler.SkipIfShadowPresent && hasShadow {
+				continue
 			}
-			convertedParts[i] = convertedPart
-		} else if part.Command == CommandGroupAdd && !hasShadow {
-			convertedPart := ConvertGroupAddToAddGroup(part)
-			if convertedPart.Command != part.Command {
-				modified = true
+
+			// Check if this command matches
+			if part.Command == handler.Command {
+				convertedPart := handler.Converter(part)
+				// Check if conversion actually changed anything
+				if convertedPart.Command != part.Command || !slices.Equal(convertedPart.Args, part.Args) {
+					convertedParts[i] = convertedPart
+					modified = true
+					converted = true
+					break
+				}
 			}
-			convertedParts[i] = convertedPart
-		} else if part.Command == CommandGNUTar {
-			convertedPart := ConvertGNUTarToBusyboxTar(part)
-			// Compare arguments to see if they changed
-			if !slices.Equal(convertedPart.Args, part.Args) {
-				modified = true
-				convertedParts[i] = convertedPart
-			} else {
-				convertedParts[i] = cloneShellPart(part)
-			}
-		} else {
-			// Copy any other commands unchanged
+		}
+
+		// If no conversion was applied, copy the original part
+		if !converted {
 			convertedParts[i] = cloneShellPart(part)
 		}
 	}
