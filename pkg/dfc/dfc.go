@@ -162,7 +162,7 @@ func (d *Dockerfile) String() string {
 }
 
 // ParseDockerfile parses a Dockerfile into a structured representation
-func ParseDockerfile(ctx context.Context, content []byte) (*Dockerfile, error) {
+func ParseDockerfile(_ context.Context, content []byte) (*Dockerfile, error) {
 	// Create a new Dockerfile
 	dockerfile := &Dockerfile{
 		Lines: []*DockerfileLine{},
@@ -443,7 +443,7 @@ func convertImageReference(base, tag string, isDynamic bool, opts Options) strin
 }
 
 // Convert applies the conversion to the Dockerfile and returns a new converted Dockerfile
-func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, error) {
+func (d *Dockerfile) Convert(_ context.Context, opts Options) (*Dockerfile, error) {
 	// Create a new Dockerfile for the converted content
 	converted := &Dockerfile{
 		Lines: make([]*DockerfileLine, len(d.Lines)),
@@ -550,11 +550,8 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 			}
 
 			// First check for package manager commands
-			modifiedPMCommands, distro, manager, packages, mappedPackages, afterShell, err :=
+			modifiedPMCommands, distro, manager, packages, mappedPackages, afterShell :=
 				convertPackageManagerCommands(beforeShell, opts.PackageMap)
-			if err != nil {
-				return nil, err
-			}
 			newLine.Run.Distro = distro
 			newLine.Run.Manager = manager
 			newLine.Run.Packages = packages
@@ -657,7 +654,7 @@ func shouldConvertFromLine(from *FromDetails) bool {
 }
 
 // convertImageTag returns the converted image tag
-func convertImageTag(tag string, isDynamic bool) string {
+func convertImageTag(tag string, _ bool) string {
 	if tag == "" {
 		return DefaultImageTag
 	}
@@ -681,9 +678,9 @@ func isChainguardBaseEquivalent(base string) bool {
 
 // convertPackageManagerCommands converts package manager commands in a shell command
 // to the Alpine equivalent (apk add)
-func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (bool, Distro, Manager, []string, []string, *ShellCommand, error) {
+func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (bool, Distro, Manager, []string, []string, *ShellCommand) {
 	if shell == nil {
-		return false, "", "", nil, nil, nil, nil
+		return false, "", "", nil, nil, nil
 	}
 
 	// Determine which distro/package manager we're going to focus on
@@ -727,7 +724,7 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 
 	// If we have no packages to install, nothing to do
 	if len(packagesToInstall) == 0 || firstPMInstallIndex == -1 {
-		return false, distro, firstPM, nil, nil, shell, nil
+		return false, distro, firstPM, nil, nil, shell
 	}
 
 	// Sort and deduplicate packages
@@ -775,7 +772,7 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 		newParts[len(newParts)-1].Delimiter = ""
 	}
 
-	return true, distro, firstPM, packagesDetected, packagesToInstall, &ShellCommand{Parts: newParts}, nil
+	return true, distro, firstPM, packagesDetected, packagesToInstall, &ShellCommand{Parts: newParts}
 }
 
 // Helper function to clone a shell part
