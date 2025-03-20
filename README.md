@@ -27,6 +27,13 @@ You can also install `dfc` from source:
 go install github.com/chainguard-dev/dfc@latest
 ```
 
+You can also use the `dfc` container image (from Docker Hub or `cgr.dev`):
+
+```sh
+docker run --rm -v "$PWD":/work chainguard/dfc
+docker run --rm -v "$PWD":/work cgr.dev/chainguard/dfc
+```
+
 ## Usage
 
 Convert Dockerfile and print converted contents to terminal:
