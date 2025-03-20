@@ -58,6 +58,177 @@ func TestParseConvert(t *testing.T) {
 			},
 		},
 		{
+			name: "useradd basic example",
+			raw:  `RUN ` + CommandUserAdd + ` myuser`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `RUN ` + CommandUserAdd + ` myuser`,
+						Converted: `RUN ` + CommandAddUser + ` myuser`,
+						Run: &RunDetails{
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: CommandUserAdd,
+											Args:    []string{"myuser"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: CommandAddUser,
+											Args:    []string{"myuser"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "useradd with options",
+			raw:  `RUN ` + CommandUserAdd + ` -m -s /bin/bash -u 1001 -g mygroup myuser`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `RUN ` + CommandUserAdd + ` -m -s /bin/bash -u 1001 -g mygroup myuser`,
+						Converted: `RUN ` + CommandAddUser + ` --shell /bin/bash --uid 1001 --ingroup mygroup myuser`,
+						Run: &RunDetails{
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: CommandUserAdd,
+											Args:    []string{"-m", "-s", "/bin/bash", "-u", "1001", "-g", "mygroup", "myuser"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: CommandAddUser,
+											Args:    []string{"--shell", "/bin/bash", "--uid", "1001", "--ingroup", "mygroup", "myuser"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "groupadd basic example",
+			raw:  `RUN ` + CommandGroupAdd + ` mygroup`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `RUN ` + CommandGroupAdd + ` mygroup`,
+						Converted: `RUN ` + CommandAddGroup + ` mygroup`,
+						Run: &RunDetails{
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: CommandGroupAdd,
+											Args:    []string{"mygroup"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: CommandAddGroup,
+											Args:    []string{"mygroup"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "groupadd with options",
+			raw:  `RUN ` + CommandGroupAdd + ` -r -g 1001 mygroup`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `RUN ` + CommandGroupAdd + ` -r -g 1001 mygroup`,
+						Converted: `RUN ` + CommandAddGroup + ` --system --gid 1001 mygroup`,
+						Run: &RunDetails{
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: CommandGroupAdd,
+											Args:    []string{"-r", "-g", "1001", "mygroup"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: CommandAddGroup,
+											Args:    []string{"--system", "--gid", "1001", "mygroup"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "multiple commands with useradd",
+			raw:  `RUN ` + CommandGroupAdd + ` -r appgroup && ` + CommandUserAdd + ` -r -g appgroup appuser`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw: `RUN ` + CommandGroupAdd + ` -r appgroup && ` + CommandUserAdd + ` -r -g appgroup appuser`,
+						Converted: `RUN ` + CommandAddGroup + ` --system appgroup && \
+    ` + CommandAddUser + ` --system --ingroup appgroup appuser`,
+						Run: &RunDetails{
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command:   CommandGroupAdd,
+											Args:      []string{"-r", "appgroup"},
+											Delimiter: "&&",
+										},
+										{
+											Command: CommandUserAdd,
+											Args:    []string{"-r", "-g", "appgroup", "appuser"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command:   CommandAddGroup,
+											Args:      []string{"--system", "appgroup"},
+											Delimiter: "&&",
+										},
+										{
+											Command: CommandAddUser,
+											Args:    []string{"--system", "--ingroup", "appgroup", "appuser"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "multi-line RUN command",
 			raw:  `RUN apt-get update && apt-get install -y nginx curl vim`,
 			expected: &Dockerfile{
@@ -629,6 +800,288 @@ RUN echo hello world
 							Base:   "python",
 							Tag:    "3.9-slim",
 							Digest: "sha256:123456abcdef",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "complex command with package manager and user management",
+			raw:  `RUN apt-get update && apt-get install -y nginx && echo hello && ` + CommandUserAdd + ` myuser`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw: `RUN apt-get update && apt-get install -y nginx && echo hello && ` + CommandUserAdd + ` myuser`,
+						Converted: `RUN apk add -U nginx && \
+    echo hello && \
+    ` + CommandAddUser + ` myuser`,
+						Run: &RunDetails{
+							Distro:   DistroDebian,
+							Manager:  ManagerAptGet,
+							Packages: []string{"nginx"},
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command:   "apt-get",
+											Args:      []string{"update"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "apt-get",
+											Args:      []string{"install", "-y", "nginx"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "echo",
+											Args:      []string{"hello"},
+											Delimiter: "&&",
+										},
+										{
+											Command: CommandUserAdd,
+											Args:    []string{"myuser"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command:   "apk",
+											Args:      []string{"add", "-U", "nginx"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "echo",
+											Args:      []string{"hello"},
+											Delimiter: "&&",
+										},
+										{
+											Command: CommandAddUser,
+											Args:    []string{"myuser"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "complex command with package manager and user management plus shadow installed",
+			raw:  `RUN apt-get update && apt-get install -y nginx shadow && echo hello && ` + CommandUserAdd + ` myuser`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw: `RUN apt-get update && apt-get install -y nginx shadow && echo hello && ` + CommandUserAdd + ` myuser`,
+						Converted: `RUN apk add -U nginx shadow && \
+    echo hello && \
+    ` + CommandUserAdd + ` myuser`,
+						Run: &RunDetails{
+							Distro:   DistroDebian,
+							Manager:  ManagerAptGet,
+							Packages: []string{"nginx", "shadow"},
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command:   "apt-get",
+											Args:      []string{"update"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "apt-get",
+											Args:      []string{"install", "-y", "nginx", "shadow"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "echo",
+											Args:      []string{"hello"},
+											Delimiter: "&&",
+										},
+										{
+											Command: CommandUserAdd,
+											Args:    []string{"myuser"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command:   "apk",
+											Args:      []string{"add", "-U", "nginx", "shadow"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "echo",
+											Args:      []string{"hello"},
+											Delimiter: "&&",
+										},
+										{
+											Command: CommandUserAdd,
+											Args:    []string{"myuser"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "basic_tar_extract_command",
+			raw:  `RUN tar xf archive.tar`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `RUN tar xf archive.tar`,
+						Converted: `RUN tar -x -f archive.tar`,
+						Run: &RunDetails{
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: "tar",
+											Args:    []string{"xf", "archive.tar"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: "tar",
+											Args:    []string{"-x", "-f", "archive.tar"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "tar_with_verbose_and_long_options",
+			raw:  `RUN tar --extract --verbose --file=archive.tar`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `RUN tar --extract --verbose --file=archive.tar`,
+						Converted: `RUN tar -x -v -f archive.tar`,
+						Run: &RunDetails{
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: "tar",
+											Args:    []string{"--extract", "--verbose", "--file=archive.tar"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: "tar",
+											Args:    []string{"-x", "-v", "-f", "archive.tar"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "complex_command_with_package_manager_and_tar",
+			raw:  `RUN apt-get update && apt-get install -y wget && wget file.tar.gz && tar -xzf file.tar.gz -C /opt`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw: `RUN apt-get update && apt-get install -y wget && wget file.tar.gz && tar -xzf file.tar.gz -C /opt`,
+						Converted: `RUN apk add -U wget && \
+    wget file.tar.gz && \
+    tar -C /opt -xzf file.tar.gz`,
+						Run: &RunDetails{
+							Distro:   DistroDebian,
+							Manager:  ManagerAptGet,
+							Packages: []string{"wget"},
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command:   "apt-get",
+											Args:      []string{"update"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "apt-get",
+											Args:      []string{"install", "-y", "wget"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "wget",
+											Args:      []string{"file.tar.gz"},
+											Delimiter: "&&",
+										},
+										{
+											Command: "tar",
+											Args:    []string{"-xzf", "file.tar.gz", "-C", "/opt"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command:   "apk",
+											Args:      []string{"add", "-U", "wget"},
+											Delimiter: "&&",
+										},
+										{
+											Command:   "wget",
+											Args:      []string{"file.tar.gz"},
+											Delimiter: "&&",
+										},
+										{
+											Command: "tar",
+											Args:    []string{"-C", "/opt", "-xzf", "file.tar.gz"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "tar_with_unsupported_options",
+			raw:  `RUN tar --extract --same-owner --numeric-owner --file archive.tar`,
+			expected: &Dockerfile{
+				Lines: []*DockerfileLine{
+					{
+						Raw:       `RUN tar --extract --same-owner --numeric-owner --file archive.tar`,
+						Converted: `RUN tar -x -f archive.tar`,
+						Run: &RunDetails{
+							Shell: &RunDetailsShell{
+								Before: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: "tar",
+											Args:    []string{"--extract", "--same-owner", "--numeric-owner", "--file", "archive.tar"},
+										},
+									},
+								},
+								After: &ShellCommand{
+									Parts: []*ShellPart{
+										{
+											Command: "tar",
+											Args:    []string{"-x", "-f", "archive.tar"},
+										},
+									},
+								},
+							},
 						},
 					},
 				},

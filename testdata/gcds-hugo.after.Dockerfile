@@ -11,10 +11,13 @@ RUN apk add -U ca-certificates curl git make openssl && \
     rm -rf /var/lib/apt/lists/*
 
 RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then ARCH=arm64; else ARCH=amd64; fi && \
+    if [ "$ARCH" = "aarch64" ] ; \
+    then ARCH=arm64 ; \
+    else ARCH=amd64 ; \
+    fi && \
     echo "Architecture: $ARCH" && \
     wget -O hugo_extended_${HUGO_VERSION}.tar.gz https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-${ARCH}.tar.gz && \
-    tar xf hugo_extended_${HUGO_VERSION}.tar.gz && \
+    tar -x -f hugo_extended_${HUGO_VERSION}.tar.gz && \
     mv hugo /usr/bin/hugo && \
     rm hugo_extended_${HUGO_VERSION}.tar.gz && \
     echo "Hugo ${HUGO_VERSION} installed" && \

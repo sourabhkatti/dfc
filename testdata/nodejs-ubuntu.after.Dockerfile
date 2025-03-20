@@ -19,7 +19,7 @@ RUN curl -sL https://deb.nodesource.com/setup_${NODE_VERSION} | \
     npm install -g npm@latest
 
 # Add a non-root user
-RUN useradd -m -s /bin/bash appuser
+RUN adduser --shell /bin/bash appuser
 WORKDIR /home/appuser/app
 RUN chown -R appuser:appuser /home/appuser
 

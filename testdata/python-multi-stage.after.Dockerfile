@@ -28,7 +28,7 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Add non-root user
-RUN useradd --create-home appuser
+RUN adduser appuser
 USER appuser
 WORKDIR /home/appuser
 

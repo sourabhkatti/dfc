@@ -189,6 +189,29 @@ then `USER root` will be appended under the last `FROM` line.
 
 In the future we plan to handle this more elegantly, but this is the current state.
 
+## Special considerations
+
+### Busybox command syntax
+
+#### useradd/groupadd vs. adduser/addgroup
+
+Since adding users and groups in Chainguard Images in Dockerfiles requires
+`adduser` / `addgroup` (via busybox), when we detect the use of
+`useradd` or `groupadd` commands in `RUN` lines, we will automatically try to
+convert them to the equivalent `adduser` / `addgroup` commands.
+
+If we see that you have installed the `shadow` package
+(which actually provides `useradd` and `groupadd`), then we do not modify
+these commands and leave them as is.
+
+#### tar command
+
+The syntax for the `tar` command is slightly different in busybox than it is
+in the GNU version which is present by default on various distros.
+
+For that reason, we will attempt to convert `tar` commands in `RUN` lines
+using the GNU syntax to use the busybox syntax instead.
+
 ## JSON mode
 
 Get converted Dockerfile as JSON using `--json` / `-j`:
