@@ -220,7 +220,6 @@ func TestShellParsing(t *testing.T) {
 				},
 			},
 		})
-
 	}
 
 	cases = append(cases, testCase{
