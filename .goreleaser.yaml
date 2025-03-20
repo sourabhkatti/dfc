@@ -43,6 +43,25 @@ archives:
     - LICENSE
   wrap_in_directory: true
 
+brews:
+  - name: dfc
+    repository:
+      owner: chainguard-dev
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    url_template: "https://github.com/chainguard-dev/dfc/releases/download/v{{ .Version }}/{{ .ArtifactName }}"
+    directory: Formula
+    commit_author:
+      name: guardian
+      email: guardian@chainguard.dev
+    homepage: "https://github.com/chainguard-dev/dfc"
+    description: "Convert Dockerfiles to use Chainguard"
+    install: |
+      bin.install "{{ .Binary }}" => "{{ .ProjectName }}"
+    test: |
+      system "#{bin}/{{ .ProjectName }}", "--version"
+
 checksum:
   name_template: 'checksums.txt'
 
