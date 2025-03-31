@@ -146,7 +146,7 @@ echo "RUN apt-get update && apt-get install -y nano" | dfc -
 Result:
 
 ```Dockerfile
-RUN apk add -U nano
+RUN apk add --no-cache nano
 ```
 
 ### Convert a whole Dockerfile
@@ -163,7 +163,7 @@ Result:
 ```Dockerfile
 FROM cgr.dev/ORG/node:latest-dev
 USER root
-RUN apk add -U nano
+RUN apk add --no-cache nano
 ```
 
 ## Supported platforms
@@ -187,7 +187,7 @@ For each `FROM` line in the Dockerfile, `dfc` attempts to replace the base image
 
 ### `RUN` line modifications
 
-For each `RUN` line in the Dockerfile, `dfc` attempts to detect the use of a known package manager (e.g. `apt-get` / `yum` / `apk`), extract the names of any packages being installed, try to map them via [`packages.yaml`](./packages.yaml), and replacing the old install with  `apk add -U <packages>`.
+For each `RUN` line in the Dockerfile, `dfc` attempts to detect the use of a known package manager (e.g. `apt-get` / `yum` / `apk`), extract the names of any packages being installed, try to map them via [`packages.yaml`](./packages.yaml), and replacing the old install with  `apk add --no-cache <packages>`.
 
 ### `USER` line modifications
 

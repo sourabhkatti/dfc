@@ -2,4 +2,4 @@
 FROM cgr.dev/ORG/python:latest-dev
 USER root
 
-RUN apk add -U gettext git libpq make rsync
+RUN apk add --no-cache gettext git libpq make rsync
