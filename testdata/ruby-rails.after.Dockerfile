@@ -7,13 +7,13 @@ USER root
 
 # Install system dependencies required both at runtime and build time
 # The image uses Postgres but you can swap it with mariadb-dev (for MySQL) or sqlite-dev
-RUN apk add -U nodejs postgresql-dev tzdata yarn
+RUN apk add --no-cache nodejs postgresql-dev tzdata yarn
 
 # This stage will be responsible for installing gems and npm packages
 FROM base AS dependencies
 
 # Install system dependencies required to build some Ruby gems (pg)
-RUN apk add -U build-base
+RUN apk add --no-cache build-base
 
 COPY Gemfile Gemfile.lock ./
 

@@ -12,14 +12,14 @@ ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
 # install deb packages
-RUN apk add -U gettext git libpq make rsync && \
+RUN apk add --no-cache gettext git libpq make rsync && \
     rm -rf /var/lib/apt/lists/*
 
 ARG REQ_FILE=requirements/prod.txt
 
 # install python dependencies
 COPY ./requirements ./requirements
-RUN apk add -U g++ gcc glibc-dev postgresql-dev zlib-dev && \
+RUN apk add --no-cache g++ gcc glibc-dev postgresql-dev zlib-dev && \
     python3 -m pip install --no-cache-dir -r ${REQ_FILE} && \
     rm -rf /var/lib/apt/lists/*
 

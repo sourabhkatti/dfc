@@ -751,7 +751,7 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 	newParts = append(newParts, &ShellPart{
 		ExtraPre:  shell.Parts[firstPMInstallIndex].ExtraPre,
 		Command:   "apk",
-		Args:      append([]string{"add", "-U"}, packagesToInstall...),
+		Args:      append([]string{"add", "--no-cache"}, packagesToInstall...),
 		Delimiter: delimiter,
 	})
 

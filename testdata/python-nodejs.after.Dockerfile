@@ -6,7 +6,7 @@ USER root
 
 # Update apt and install Python
 RUN : && \
-    apk add -U python
+    apk add --no-cache python
 
 WORKDIR /app
 COPY . /app

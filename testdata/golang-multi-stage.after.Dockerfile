@@ -20,7 +20,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o app .
 
 # Install UPX for binary compression (optional)
-RUN apk add -U wget xz
+RUN apk add --no-cache wget xz
 RUN wget -P /tmp/ https://github.com/upx/upx/releases/download/v3.95/upx-3.95-amd64_linux.tar.xz
 RUN tar -x -v -C /tmp -f /tmp/upx-3.95-amd64_linux.tar.xz
 RUN mv /tmp/upx-3.95-amd64_linux/upx /usr/local/bin/upx
@@ -34,7 +34,7 @@ FROM cgr.dev/ORG/alpine:3.17-dev
 USER root
 
 # Install any runtime dependencies
-RUN apk add -U ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 

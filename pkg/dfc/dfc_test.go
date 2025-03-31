@@ -29,7 +29,7 @@ func TestParseConvert(t *testing.T) {
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apt-get update && apt-get install -y nginx`,
-						Converted: `RUN apk add -U nginx`,
+						Converted: `RUN apk add --no-cache nginx`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
 							Manager:  ManagerAptGet,
@@ -52,7 +52,7 @@ func TestParseConvert(t *testing.T) {
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "nginx"},
+											Args:    []string{"add", "--no-cache", "nginx"},
 										},
 									},
 								},
@@ -240,7 +240,7 @@ func TestParseConvert(t *testing.T) {
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apt-get update && apt-get install -y nginx curl vim`,
-						Converted: `RUN apk add -U curl nginx vim`,
+						Converted: `RUN apk add --no-cache curl nginx vim`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
 							Manager:  ManagerAptGet,
@@ -263,7 +263,7 @@ func TestParseConvert(t *testing.T) {
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "curl", "nginx", "vim"},
+											Args:    []string{"add", "--no-cache", "curl", "nginx", "vim"},
 										},
 									},
 								},
@@ -280,7 +280,7 @@ func TestParseConvert(t *testing.T) {
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apt-get update && apt-get install -y nginx`,
-						Converted: `RUN apk add -U nginx`,
+						Converted: `RUN apk add --no-cache nginx`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
 							Manager:  ManagerAptGet,
@@ -303,7 +303,7 @@ func TestParseConvert(t *testing.T) {
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "nginx"},
+											Args:    []string{"add", "--no-cache", "nginx"},
 										},
 									},
 								},
@@ -372,7 +372,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN yum install -y nginx`,
-						Converted: `RUN apk add -U nginx`,
+						Converted: `RUN apk add --no-cache nginx`,
 						Run: &RunDetails{
 							Distro:   DistroFedora,
 							Manager:  ManagerYum,
@@ -390,7 +390,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "nginx"},
+											Args:    []string{"add", "--no-cache", "nginx"},
 										},
 									},
 								},
@@ -407,7 +407,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN dnf install -y nginx httpd php`,
-						Converted: `RUN apk add -U httpd nginx php`,
+						Converted: `RUN apk add --no-cache httpd nginx php`,
 						Run: &RunDetails{
 							Distro:   DistroFedora,
 							Manager:  ManagerDnf,
@@ -425,7 +425,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "httpd", "nginx", "php"},
+											Args:    []string{"add", "--no-cache", "httpd", "nginx", "php"},
 										},
 									},
 								},
@@ -447,7 +447,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apk update && apk add nginx`,
-						Converted: `RUN apk add -U nginx`,
+						Converted: `RUN apk add --no-cache nginx`,
 						Run: &RunDetails{
 							Distro:   DistroAlpine,
 							Manager:  ManagerApk,
@@ -470,7 +470,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "nginx"},
+											Args:    []string{"add", "--no-cache", "nginx"},
 										},
 									},
 								},
@@ -487,7 +487,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apt-get install -y nginx nginx curl curl`,
-						Converted: `RUN apk add -U curl nginx`,
+						Converted: `RUN apk add --no-cache curl nginx`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
 							Manager:  ManagerAptGet,
@@ -505,7 +505,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "curl", "nginx"},
+											Args:    []string{"add", "--no-cache", "curl", "nginx"},
 										},
 									},
 								},
@@ -522,7 +522,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apt-get install -y nginx && apt-get install -y curl && apt-get install -y vim`,
-						Converted: `RUN apk add -U curl nginx vim`,
+						Converted: `RUN apk add --no-cache curl nginx vim`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
 							Manager:  ManagerAptGet,
@@ -550,7 +550,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "curl", "nginx", "vim"},
+											Args:    []string{"add", "--no-cache", "curl", "nginx", "vim"},
 										},
 									},
 								},
@@ -567,7 +567,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apt-get update && apt-get install -y nginx curl vim && apt-get install -y curl nginx`,
-						Converted: `RUN apk add -U curl nginx vim`,
+						Converted: `RUN apk add --no-cache curl nginx vim`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
 							Manager:  ManagerAptGet,
@@ -595,7 +595,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "curl", "nginx", "vim"},
+											Args:    []string{"add", "--no-cache", "curl", "nginx", "vim"},
 										},
 									},
 								},
@@ -613,7 +613,7 @@ RUN echo hello world
 					{
 						Raw: `RUN echo hello; apt-get update && apt-get install -y nginx curl vim && apt-get install -y curl nginx && echo goodbye`,
 						Converted: `RUN echo hello ; \
-    apk add -U curl nginx vim && \
+    apk add --no-cache curl nginx vim && \
     echo goodbye`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
@@ -657,7 +657,7 @@ RUN echo hello world
 										},
 										{
 											Command:   "apk",
-											Args:      []string{"add", "-U", "curl", "nginx", "vim"},
+											Args:      []string{"add", "--no-cache", "curl", "nginx", "vim"},
 											Delimiter: "&&",
 										},
 										{
@@ -679,7 +679,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apt-get update && apt-get install -y nginx && apt-get install -y vim curl`,
-						Converted: `RUN apk add -U curl nginx vim`,
+						Converted: `RUN apk add --no-cache curl nginx vim`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
 							Manager:  ManagerAptGet,
@@ -707,7 +707,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "curl", "nginx", "vim"},
+											Args:    []string{"add", "--no-cache", "curl", "nginx", "vim"},
 										},
 									},
 								},
@@ -724,7 +724,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN apt-get update && apt-get install -y abc nginx`,
-						Converted: `RUN apk add -U lmnop nginx xyz`,
+						Converted: `RUN apk add --no-cache lmnop nginx xyz`,
 						Run: &RunDetails{
 							Distro:   DistroDebian,
 							Manager:  ManagerAptGet,
@@ -747,7 +747,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "lmnop", "nginx", "xyz"},
+											Args:    []string{"add", "--no-cache", "lmnop", "nginx", "xyz"},
 										},
 									},
 								},
@@ -764,7 +764,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `RUN yum install -y nginx abc`,
-						Converted: `RUN apk add -U abc nginx`,
+						Converted: `RUN apk add --no-cache abc nginx`,
 						Run: &RunDetails{
 							Distro:   DistroFedora,
 							Manager:  ManagerYum,
@@ -782,7 +782,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command: "apk",
-											Args:    []string{"add", "-U", "abc", "nginx"},
+											Args:    []string{"add", "--no-cache", "abc", "nginx"},
 										},
 									},
 								},
@@ -817,7 +817,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw: `RUN apt-get update && apt-get install -y nginx && echo hello && ` + CommandUserAdd + ` myuser`,
-						Converted: `RUN apk add -U nginx && \
+						Converted: `RUN apk add --no-cache nginx && \
     echo hello && \
     ` + CommandAddUser + ` myuser`,
 						Run: &RunDetails{
@@ -852,7 +852,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command:   "apk",
-											Args:      []string{"add", "-U", "nginx"},
+											Args:      []string{"add", "--no-cache", "nginx"},
 											Delimiter: "&&",
 										},
 										{
@@ -879,7 +879,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw: `RUN apt-get update && apt-get install -y nginx shadow && echo hello && ` + CommandUserAdd + ` myuser`,
-						Converted: `RUN apk add -U nginx shadow && \
+						Converted: `RUN apk add --no-cache nginx shadow && \
     echo hello && \
     ` + CommandUserAdd + ` myuser`,
 						Run: &RunDetails{
@@ -914,7 +914,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command:   "apk",
-											Args:      []string{"add", "-U", "nginx", "shadow"},
+											Args:      []string{"add", "--no-cache", "nginx", "shadow"},
 											Delimiter: "&&",
 										},
 										{
@@ -1005,7 +1005,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw: `RUN apt-get update && apt-get install -y wget && wget file.tar.gz && tar -xzf file.tar.gz -C /opt`,
-						Converted: `RUN apk add -U wget && \
+						Converted: `RUN apk add --no-cache wget && \
     wget file.tar.gz && \
     tar -C /opt -xzf file.tar.gz`,
 						Run: &RunDetails{
@@ -1040,7 +1040,7 @@ RUN echo hello world
 									Parts: []*ShellPart{
 										{
 											Command:   "apk",
-											Args:      []string{"add", "-U", "wget"},
+											Args:      []string{"add", "--no-cache", "wget"},
 											Delimiter: "&&",
 										},
 										{
