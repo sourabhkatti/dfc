@@ -5,13 +5,13 @@ alpine: {}
 debian:
   build-essential:
    - build-base
-
-  # Thing noticed in django build
   awscli:
     - aws-cli
   fuse:
     - fuse2
     - fuse-common
+  g++:
+    - gcc
   git-delta:
     - delta
   gnupg2:
