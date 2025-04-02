@@ -799,7 +799,7 @@ RUN echo hello world
 				Lines: []*DockerfileLine{
 					{
 						Raw:       `FROM python:3.9-slim@sha256:123456abcdef`,
-						Converted: `FROM cgr.dev/ORG/python:3.9-dev`,
+						Converted: `FROM cgr.dev/ORG/python:3.9`,
 						Stage:     1,
 						From: &FromDetails{
 							Base:   "python",
@@ -1162,9 +1162,14 @@ FROM ${BASE_IMAGE} AS base`,
 			}
 
 			converted, err := parsed.Convert(ctx, Options{
-				PackageMap: PackageMap{
-					DistroDebian: {
-						"abc": []string{"xyz", "lmnop"},
+				Mappings: MappingsConfig{
+					Images: map[string]string{
+						"debian": DefaultChainguardBase + ":latest",
+					},
+					Packages: PackageMap{
+						DistroDebian: {
+							"abc": []string{"xyz", "lmnop"},
+						},
 					},
 				},
 			})
@@ -1187,14 +1192,24 @@ func TestFullFileConversion(t *testing.T) {
 	}
 
 	var mappingsBytes []byte
-	mappingsBytes, err = os.ReadFile("../../packages.yaml")
+	mappingsBytes, err = os.ReadFile("../../mappings.yaml")
 	if err != nil {
 		t.Fatalf("Failed to read mappings file: %v", err)
 	}
 
-	var packageMap PackageMap
-	if err := yaml.Unmarshal(mappingsBytes, &packageMap); err != nil {
+	var mappingsConfig MappingsConfig
+	if err := yaml.Unmarshal(mappingsBytes, &mappingsConfig); err != nil {
 		t.Fatalf("Failed to unmarshal package mappings: %v", err)
+	}
+
+	// Add default image mappings if none are provided in the file
+	if mappingsConfig.Images == nil {
+		mappingsConfig.Images = map[string]string{
+			"ubuntu": DefaultChainguardBase + ":latest",
+			"debian": DefaultChainguardBase + ":latest",
+			"fedora": DefaultChainguardBase + ":latest",
+			"alpine": DefaultChainguardBase + ":latest",
+		}
 	}
 
 	// Test each file
@@ -1222,7 +1237,7 @@ func TestFullFileConversion(t *testing.T) {
 				t.Fatalf("Failed to parse Dockerfile: %v", err)
 			}
 			converted, err := orig.Convert(ctx, Options{
-				PackageMap: packageMap,
+				Mappings: mappingsConfig,
 			})
 			if err != nil {
 				t.Fatalf("Failed to convert Dockerfile: %v", err)
@@ -1253,9 +1268,11 @@ RUN apt-get update && apt-get install -y nano`
 
 	// Create options
 	opts := Options{
-		PackageMap: PackageMap{
-			DistroDebian: {
-				"nano": []string{"nano"},
+		Mappings: MappingsConfig{
+			Packages: PackageMap{
+				DistroDebian: {
+					"nano": []string{"nano"},
+				},
 			},
 		},
 	}
