@@ -673,7 +673,8 @@ func isChainguardBaseEquivalent(base string) bool {
 	// Extract the basename (part after the last slash)
 	baseFilename := filepath.Base(base)
 
-	return baseFilename == "ubuntu" || baseFilename == "debian"
+	// TODO: add these into mappings file
+	return baseFilename == "ubuntu" || baseFilename == "debian" || baseFilename == "fedora"
 }
 
 // convertPackageManagerCommands converts package manager commands in a shell command
@@ -699,15 +700,27 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 				distro = PackageManagerInfoMap[firstPM].Distro
 			}
 
-			// Check if this is an install command
+			// Check if this is an install command by finding the install keyword
 			pmInfo := PackageManagerInfoMap[firstPM]
-			if len(part.Args) > 0 && part.Args[0] == pmInfo.InstallKeyword {
+			installKeywordIndex := -1
+
+			// Find the index of the install keyword in arguments
+			for j, arg := range part.Args {
+				if arg == pmInfo.InstallKeyword {
+					installKeywordIndex = j
+					break
+				}
+			}
+
+			// If we found the install keyword, process the command
+			if installKeywordIndex >= 0 {
 				if firstPMInstallIndex == -1 {
 					firstPMInstallIndex = i
 				}
 
 				// Collect packages, applying mapping if available
-				for _, arg := range part.Args[1:] {
+				// Start from after the install keyword
+				for _, arg := range part.Args[installKeywordIndex+1:] {
 					if !strings.HasPrefix(arg, "-") {
 						packagesDetected = append(packagesDetected, arg)
 
