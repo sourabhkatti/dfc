@@ -21,8 +21,8 @@ import (
 	"github.com/chainguard-dev/dfc/pkg/dfc"
 )
 
-//go:embed packages.yaml
-var packagesYamlBytes []byte
+//go:embed mappings.yaml
+var mappingsYamlBytes []byte
 
 var (
 	// Version is the semantic version (added at compile time via -X main.Version=$VERSION)
@@ -88,7 +88,7 @@ func cli() *cobra.Command {
 			}
 
 			// Try to parse and merge additional mappings from packages.yaml or custom mappings file
-			var packageMap dfc.PackageMap
+			var mappings dfc.MappingsConfig
 			var mappingsBytes []byte
 
 			// Use custom mappings file if provided
@@ -100,11 +100,11 @@ func cli() *cobra.Command {
 				}
 				log.Printf("using custom mappings file: %s", mappingsFile)
 			} else {
-				// Use embedded packages.yaml
-				mappingsBytes = packagesYamlBytes
+				// Use embedded mappings.yaml
+				mappingsBytes = mappingsYamlBytes
 			}
 
-			if err := yaml.Unmarshal(mappingsBytes, &packageMap); err != nil {
+			if err := yaml.Unmarshal(mappingsBytes, &mappings); err != nil {
 				return fmt.Errorf("unmarshalling package mappings: %w", err)
 			}
 
@@ -112,7 +112,7 @@ func cli() *cobra.Command {
 			opts := dfc.Options{
 				Organization: org,
 				Registry:     registry,
-				PackageMap:   packageMap,
+				Mappings:     mappings,
 			}
 
 			// Convert the Dockerfile

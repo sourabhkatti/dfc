@@ -7,8 +7,10 @@ package dfc
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -379,14 +381,20 @@ func ParseDockerfile(_ context.Context, content []byte) (*Dockerfile, error) {
 	return dockerfile, nil
 }
 
-// Options represents conversion options
+// Options defines the configuration options for the conversion
 type Options struct {
 	Organization string
 	Registry     string
-	PackageMap   PackageMap
+	Mappings     MappingsConfig
 }
 
-// PackagesConfig represents the structure of packages.yaml
+// MappingsConfig represents the structure of mappings.yaml
+type MappingsConfig struct {
+	Images   map[string]string `yaml:"images"`
+	Packages PackageMap        `yaml:"packages"`
+}
+
+// PackageMap maps distros to package mappings
 type PackageMap map[Distro]map[string][]string
 
 // parseImageReference extracts base and tag from an image reference
@@ -399,47 +407,6 @@ func parseImageReference(imageRef string) (base, tag string) {
 		base = imageRef
 	}
 	return base, tag
-}
-
-// convertImageReference handles the conversion of an image reference (base:tag) to a Chainguard equivalent
-func convertImageReference(base, tag string, isDynamic bool, opts Options) string {
-	// Handle the basename
-	baseFilename := filepath.Base(base)
-
-	// Special case for ubuntu/debian/etc - use chainguard-base instead
-	if isChainguardBaseEquivalent(baseFilename) {
-		baseFilename = DefaultChainguardBase
-		tag = "latest" // Always use latest tag for chainguard-base
-	}
-
-	// Build the full image reference with registry and organization
-	var newBase string
-
-	// If registry is specified, use registry/basename
-	if opts.Registry != "" {
-		newBase = opts.Registry + "/" + baseFilename
-	} else {
-		// Otherwise use DefaultRegistryDomain/org/basename
-		org := opts.Organization
-		if org == "" {
-			org = DefaultOrg
-		}
-		newBase = DefaultRegistryDomain + "/" + org + "/" + baseFilename
-	}
-
-	// Handle the tag
-	var newTag string
-	if tag != "latest" { // Skip tag conversion for 'latest'
-		newTag = convertImageTag(tag, isDynamic)
-	} else {
-		newTag = tag
-	}
-
-	// Combine into a single reference
-	if newTag != "" {
-		return newBase + ":" + newTag
-	}
-	return newBase
 }
 
 // Convert applies the conversion to the Dockerfile and returns a new converted Dockerfile
@@ -456,15 +423,74 @@ func (d *Dockerfile) Convert(_ context.Context, opts Options) (*Dockerfile, erro
 	argNameToDockerfileLine := make(map[string]*DockerfileLine)
 	argsUsedAsBase := make(map[string]bool)
 
+	// Track stages with RUN commands for determining if we need -dev suffix
+	stagesWithRunCommands := detectStagesWithRunCommands(d.Lines)
+
 	// First pass: collect all ARG definitions and identify which ones are used as base images
-	for _, line := range d.Lines {
+	identifyArgsUsedAsBaseImages(d.Lines, argNameToDockerfileLine, argsUsedAsBase)
+
+	// Convert each line
+	for i, line := range d.Lines {
+		// Create a deep copy of the line
+		newLine := &DockerfileLine{
+			Raw:   line.Raw,
+			Extra: line.Extra,
+			Stage: line.Stage,
+		}
+
+		if line.From != nil {
+			newLine.From = copyFromDetails(line.From)
+
+			// Apply FROM line conversion only for non-dynamic bases
+			if shouldConvertFromLine(line.From) {
+				newLine.Converted = convertFromLine(line.From, line.Stage, stagesWithRunCommands, opts)
+			}
+		}
+
+		// Handle ARG lines that are used as base images
+		if line.Arg != nil && line.Arg.UsedAsBase && line.Arg.DefaultValue != "" {
+			argLine, argDetails := convertArgLine(line.Arg, d.Lines, stagesWithRunCommands, opts)
+			newLine.Converted = argLine
+			newLine.Arg = argDetails
+		}
+
+		// Process RUN commands
+		if line.Run != nil && line.Run.Shell != nil && line.Run.Shell.Before != nil {
+			processRunLine(newLine, line, stagePackages, opts.Mappings.Packages)
+		}
+
+		// Add the converted line to the result
+		converted.Lines[i] = newLine
+	}
+
+	// Second pass: add USER root directives where needed
+	addUserRootDirectives(converted.Lines)
+
+	return converted, nil
+}
+
+// detectStagesWithRunCommands identifies which stages contain RUN commands
+func detectStagesWithRunCommands(lines []*DockerfileLine) map[int]bool {
+	stagesWithRunCommands := make(map[int]bool)
+
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line.Raw)), DirectiveRun+" ") {
+			stagesWithRunCommands[line.Stage] = true
+		}
+	}
+
+	return stagesWithRunCommands
+}
+
+// identifyArgsUsedAsBaseImages identifies ARGs that are used as base images
+func identifyArgsUsedAsBaseImages(lines []*DockerfileLine, argNameToLine map[string]*DockerfileLine, argsUsedAsBase map[string]bool) {
+	for _, line := range lines {
 		if line.Arg != nil && line.Arg.Name != "" {
-			argNameToDockerfileLine[line.Arg.Name] = line
+			argNameToLine[line.Arg.Name] = line
 		}
 
 		if line.From != nil && line.From.BaseDynamic {
 			// Check if the base contains a reference to an ARG
-			// Extract the ARG name from the dynamic reference (e.g., $BASE_IMAGE or ${BASE_IMAGE})
 			baseName := line.From.Base
 			if strings.HasPrefix(baseName, "$") {
 				// Handle both ${VAR} and $VAR formats
@@ -479,132 +505,285 @@ func (d *Dockerfile) Convert(_ context.Context, opts Options) (*Dockerfile, erro
 
 	// Mark the ARGs used as base
 	for argName := range argsUsedAsBase {
-		if line, exists := argNameToDockerfileLine[argName]; exists && line.Arg != nil {
+		if line, exists := argNameToLine[argName]; exists && line.Arg != nil {
 			line.Arg.UsedAsBase = true
 		}
 	}
+}
 
-	// Convert each line
-	for i, line := range d.Lines {
-		// Create a deep copy of the line
-		newLine := &DockerfileLine{
-			Raw:   line.Raw,
-			Extra: line.Extra,
-			Stage: line.Stage,
+// copyFromDetails creates a deep copy of FromDetails
+func copyFromDetails(from *FromDetails) *FromDetails {
+	return &FromDetails{
+		Base:        from.Base,
+		Tag:         from.Tag,
+		Digest:      from.Digest,
+		Alias:       from.Alias,
+		Parent:      from.Parent,
+		BaseDynamic: from.BaseDynamic,
+		TagDynamic:  from.TagDynamic,
+	}
+}
+
+// convertFromLine handles converting a FROM line
+func convertFromLine(from *FromDetails, stage int, stagesWithRunCommands map[int]bool, opts Options) string {
+	// Determine if we need the -dev suffix
+	needsDevSuffix := stagesWithRunCommands[stage]
+
+	// Get the converted base without tag
+	base := from.Base
+	tag := from.Tag
+
+	// Handle the basename
+	baseFilename := filepath.Base(base)
+
+	// Get the appropriate Chainguard image name using mappings
+	targetImage := baseFilename
+	var convertedTag string
+
+	// Check for exact match first
+	if mappedImage, ok := opts.Mappings.Images[baseFilename]; ok {
+		// Check if the mapped image includes a tag
+		if parts := strings.Split(mappedImage, ":"); len(parts) > 1 {
+			targetImage = parts[0]
+			convertedTag = parts[1]
+		} else {
+			targetImage = mappedImage
 		}
-
-		if line.From != nil {
-			newLine.From = &FromDetails{
-				Base:        line.From.Base,
-				Tag:         line.From.Tag,
-				Digest:      line.From.Digest,
-				Alias:       line.From.Alias,
-				Parent:      line.From.Parent,
-				BaseDynamic: line.From.BaseDynamic,
-				TagDynamic:  line.From.TagDynamic,
-			}
-
-			// Apply FROM line conversion only for non-dynamic bases
-			if shouldConvertFromLine(line.From) {
-				newImageRef := convertImageReference(line.From.Base, line.From.Tag, line.From.TagDynamic, opts)
-
-				// Create the converted FROM line
-				fromLine := DirectiveFrom + " " + newImageRef
-				if line.From.Alias != "" {
-					fromLine += " " + KeywordAs + " " + line.From.Alias
-				}
-
-				newLine.Converted = fromLine
-			}
-		}
-
-		// Handle ARG lines that are used as base images
-		if line.Arg != nil && line.Arg.UsedAsBase && line.Arg.DefaultValue != "" {
-			// Parse the default value as a base image
-			base, tag := parseImageReference(line.Arg.DefaultValue)
-
-			// Convert the image reference
-			newDefaultValue := convertImageReference(base, tag, false, opts)
-
-			// Create the converted ARG line
-			argLine := DirectiveArg + " " + line.Arg.Name + "=" + newDefaultValue
-			newLine.Converted = argLine
-
-			// Copy the Arg structure
-			newLine.Arg = &ArgDetails{
-				Name:         line.Arg.Name,
-				DefaultValue: newDefaultValue,
-				UsedAsBase:   true,
-			}
-		}
-
-		// Process RUN commands
-		if line.Run != nil && line.Run.Shell != nil && line.Run.Shell.Before != nil {
-			beforeShell := line.Run.Shell.Before
-
-			// Initialize RunDetails with Before shell
-			newLine.Run = &RunDetails{
-				Shell: &RunDetailsShell{
-					Before: beforeShell,
-				},
-			}
-
-			// First check for package manager commands
-			modifiedPMCommands, distro, manager, packages, mappedPackages, afterShell :=
-				convertPackageManagerCommands(beforeShell, opts.PackageMap)
-			newLine.Run.Distro = distro
-			newLine.Run.Manager = manager
-			newLine.Run.Packages = packages
-
-			// Add the mapped packages to the stage's package list
-			if len(mappedPackages) > 0 {
-				if _, exists := stagePackages[line.Stage]; !exists {
-					stagePackages[line.Stage] = []string{}
-				}
-				stagePackages[line.Stage] = append(stagePackages[line.Stage], mappedPackages...)
-			}
-
-			modifiedBusyboxCommands := false
-			modifiedBusyboxCommands, afterShell = convertBusyboxCommands(afterShell, stagePackages[line.Stage])
-
-			// Check if we modified anything (related to package managers or useradd/groupadd)
-			modifiedAnything := modifiedPMCommands || modifiedBusyboxCommands
-
-			// If we modified the shell command, set After and Converted
-			if modifiedAnything {
-				newLine.Run.Shell.After = afterShell
-
-				// Extract the original RUN directive from the raw line to preserve case
-				rawLine := line.Raw
-				upperRawLine := strings.ToUpper(rawLine)
-
-				// Find the position of the case-insensitive "RUN " directive
-				runPrefix := DirectiveRun + " "
-				runIndex := strings.Index(upperRawLine, runPrefix)
-
-				if runIndex != -1 {
-					// Get the original case of the RUN directive
-					originalRunDirective := rawLine[runIndex : runIndex+len(runPrefix)]
-					newLine.Converted = originalRunDirective + afterShell.String()
-				} else {
-					// Fallback if we can't find the directive (shouldn't happen)
-					newLine.Converted = DirectiveRun + " " + afterShell.String()
+	} else {
+		// No exact match, check for glob patterns with asterisks
+		for pattern, mappedImage := range opts.Mappings.Images {
+			if strings.HasSuffix(pattern, "*") {
+				prefix := strings.TrimSuffix(pattern, "*")
+				if strings.HasPrefix(baseFilename, prefix) {
+					// Found a match with a glob pattern
+					if parts := strings.Split(mappedImage, ":"); len(parts) > 1 {
+						targetImage = parts[0]
+						convertedTag = parts[1]
+					} else {
+						targetImage = mappedImage
+					}
+					break
 				}
 			}
 		}
-
-		// Add the converted line to the result
-		converted.Lines[i] = newLine
 	}
 
-	// Second pass: add USER root directives where needed
+	// If targetTag is not specified in mapping, calculate it using the existing logic
+	if convertedTag == "" {
+		convertedTag = calculateConvertedTag(targetImage, tag, from.TagDynamic, needsDevSuffix)
+	}
+
+	// Build the image reference
+	newImageRef := buildImageReference(targetImage, convertedTag, opts)
+
+	// Create the converted FROM line
+	fromLine := DirectiveFrom + " " + newImageRef
+	if from.Alias != "" {
+		fromLine += " " + KeywordAs + " " + from.Alias
+	}
+
+	return fromLine
+}
+
+// convertArgLine handles converting an ARG line used as base image
+func convertArgLine(arg *ArgDetails, lines []*DockerfileLine, stagesWithRunCommands map[int]bool, opts Options) (string, *ArgDetails) {
+	// Get ARG default value image reference
+	base, tag := parseImageReference(arg.DefaultValue)
+
+	// Determine if we need the -dev suffix
+	needsDevSuffix := determineIfArgNeedsDevSuffix(arg.Name, lines, stagesWithRunCommands)
+
+	// Handle the basename
+	baseFilename := filepath.Base(base)
+
+	// Get the appropriate Chainguard image name using mappings
+	targetImage := baseFilename
+	var convertedTag string
+
+	// Check for exact match first
+	if mappedImage, ok := opts.Mappings.Images[baseFilename]; ok {
+		// Check if the mapped image includes a tag
+		if parts := strings.Split(mappedImage, ":"); len(parts) > 1 {
+			targetImage = parts[0]
+			convertedTag = parts[1]
+		} else {
+			targetImage = mappedImage
+		}
+	} else {
+		// No exact match, check for glob patterns with asterisks
+		for pattern, mappedImage := range opts.Mappings.Images {
+			if strings.HasSuffix(pattern, "*") {
+				prefix := strings.TrimSuffix(pattern, "*")
+				if strings.HasPrefix(baseFilename, prefix) {
+					// Found a match with a glob pattern
+					if parts := strings.Split(mappedImage, ":"); len(parts) > 1 {
+						targetImage = parts[0]
+						convertedTag = parts[1]
+					} else {
+						targetImage = mappedImage
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// If targetTag is not specified in mapping, calculate it using the existing logic
+	if convertedTag == "" {
+		convertedTag = calculateConvertedTag(targetImage, tag, false, needsDevSuffix)
+	}
+
+	// Build the image reference
+	newDefaultValue := buildImageReference(targetImage, convertedTag, opts)
+
+	// Create the converted ARG line
+	argLine := DirectiveArg + " " + arg.Name + "=" + newDefaultValue
+
+	// Create the Arg details
+	argDetails := &ArgDetails{
+		Name:         arg.Name,
+		DefaultValue: newDefaultValue,
+		UsedAsBase:   true,
+	}
+
+	return argLine, argDetails
+}
+
+// determineIfArgNeedsDevSuffix determines if an ARG used as base needs a -dev suffix
+func determineIfArgNeedsDevSuffix(argName string, lines []*DockerfileLine, stagesWithRunCommands map[int]bool) bool {
+	for _, line := range lines {
+		if line.From != nil && line.From.BaseDynamic &&
+			(strings.Contains(line.From.Base, "${"+argName+"}") ||
+				strings.Contains(line.From.Base, "$"+argName)) {
+			return stagesWithRunCommands[line.Stage]
+		}
+	}
+	return false
+}
+
+// calculateConvertedTag calculates the appropriate tag based on the base image and whether -dev is needed
+func calculateConvertedTag(baseFilename string, tag string, isDynamicTag bool, needsDevSuffix bool) string {
+	var convertedTag string
+
+	// Special case for chainguard-base - always use latest
+	if baseFilename == DefaultChainguardBase {
+		return "latest" // Always use latest tag for chainguard-base, no -dev suffix ever
+	}
+
+	// Check if tag contains a variable reference (like ${NODE_VERSION})
+	if strings.Contains(tag, "$") {
+		// For dynamic tags, preserve the original tag
+		convertedTag = tag
+		// Add -dev suffix if needed
+		if needsDevSuffix && !strings.HasSuffix(tag, "-dev") {
+			convertedTag += "-dev"
+		}
+		return convertedTag
+	}
+
+	// Convert the tag normally for static tags
+	convertedTag = convertImageTag(tag, isDynamicTag)
+
+	// Add -dev suffix if needed
+	if needsDevSuffix && convertedTag != "latest" {
+		// Ensure we don't accidentally add -dev twice
+		if !strings.HasSuffix(convertedTag, "-dev") {
+			convertedTag += "-dev"
+		}
+	} else if needsDevSuffix && convertedTag == "latest" {
+		convertedTag = DefaultImageTag
+	}
+
+	return convertedTag
+}
+
+// buildImageReference builds the full image reference with registry, org, and tag
+func buildImageReference(baseFilename string, tag string, opts Options) string {
+	var newBase string
+
+	// If registry is specified, use registry/basename
+	if opts.Registry != "" {
+		newBase = opts.Registry + "/" + baseFilename
+	} else {
+		// Otherwise use DefaultRegistryDomain/org/basename
+		org := opts.Organization
+		if org == "" {
+			org = DefaultOrg
+		}
+		newBase = DefaultRegistryDomain + "/" + org + "/" + baseFilename
+	}
+
+	// Combine into a reference
+	if tag != "" {
+		return newBase + ":" + tag
+	}
+	return newBase
+}
+
+// processRunLine handles the conversion of RUN lines
+func processRunLine(newLine *DockerfileLine, line *DockerfileLine, stagePackages map[int][]string, packageMap PackageMap) {
+	beforeShell := line.Run.Shell.Before
+
+	// Initialize RunDetails with Before shell
+	newLine.Run = &RunDetails{
+		Shell: &RunDetailsShell{
+			Before: beforeShell,
+		},
+	}
+
+	// First check for package manager commands
+	modifiedPMCommands, distro, manager, packages, mappedPackages, afterShell :=
+		convertPackageManagerCommands(beforeShell, packageMap)
+	newLine.Run.Distro = distro
+	newLine.Run.Manager = manager
+	newLine.Run.Packages = packages
+
+	// Add the mapped packages to the stage's package list
+	if len(mappedPackages) > 0 {
+		if _, exists := stagePackages[line.Stage]; !exists {
+			stagePackages[line.Stage] = []string{}
+		}
+		stagePackages[line.Stage] = append(stagePackages[line.Stage], mappedPackages...)
+	}
+
+	modifiedBusyboxCommands := false
+	modifiedBusyboxCommands, afterShell = convertBusyboxCommands(afterShell, stagePackages[line.Stage])
+
+	// Check if we modified anything (related to package managers or useradd/groupadd)
+	modifiedAnything := modifiedPMCommands || modifiedBusyboxCommands
+
+	// If we modified the shell command, set After and Converted
+	if modifiedAnything {
+		newLine.Run.Shell.After = afterShell
+
+		// Extract the original RUN directive from the raw line to preserve case
+		rawLine := line.Raw
+		upperRawLine := strings.ToUpper(rawLine)
+
+		// Find the position of the case-insensitive "RUN " directive
+		runPrefix := DirectiveRun + " "
+		runIndex := strings.Index(upperRawLine, runPrefix)
+
+		if runIndex != -1 {
+			// Get the original case of the RUN directive
+			originalRunDirective := rawLine[runIndex : runIndex+len(runPrefix)]
+			newLine.Converted = originalRunDirective + afterShell.String()
+		} else {
+			// Fallback if we can't find the directive (shouldn't happen)
+			newLine.Converted = DirectiveRun + " " + afterShell.String()
+		}
+	}
+}
+
+// addUserRootDirectives adds USER root directives where needed
+func addUserRootDirectives(lines []*DockerfileLine) {
 	// First determine which stages have converted RUN lines
 	stagesWithConvertedRuns := make(map[int]bool)
 	// Also keep track of stages that already have USER root directives
 	stagesWithUserRoot := make(map[int]bool)
 
 	// First pass - identify stages with converted RUN lines and existing USER root directives
-	for _, line := range converted.Lines {
+	for _, line := range lines {
 		// Check if this is a converted RUN line
 		if line.Run != nil && line.Converted != "" {
 			stagesWithConvertedRuns[line.Stage] = true
@@ -627,7 +806,7 @@ func (d *Dockerfile) Convert(_ context.Context, opts Options) (*Dockerfile, erro
 
 	// If we found any stages with converted RUN lines, add USER root after the FROM
 	if len(stagesWithConvertedRuns) > 0 {
-		for _, line := range converted.Lines {
+		for _, line := range lines {
 			// Check if this is a FROM line in a stage that has converted RUN lines
 			if line.From != nil && stagesWithConvertedRuns[line.Stage] {
 				// If the FROM line was converted and there's no USER root directive in this stage already
@@ -640,8 +819,6 @@ func (d *Dockerfile) Convert(_ context.Context, opts Options) (*Dockerfile, erro
 			}
 		}
 	}
-
-	return converted, nil
 }
 
 // shouldConvertFromLine determines if a FROM line should be converted
@@ -664,17 +841,40 @@ func convertImageTag(tag string, _ bool) string {
 		tag = tag[:hyphenIndex]
 	}
 
-	// If tag is dynamic, just add -dev
-	return tag + "-dev"
-}
+	// If tag has 'v' prefix for semver, remove it
+	if len(tag) > 0 && tag[0] == 'v' && (len(tag) > 1 && (tag[1] >= '0' && tag[1] <= '9')) {
+		tag = tag[1:]
+	}
 
-// isChainguardBaseEquivalent checks if the base is a chainguard base equivalent
-func isChainguardBaseEquivalent(base string) bool {
-	// Extract the basename (part after the last slash)
-	baseFilename := filepath.Base(base)
+	// Check if this is a semver tag (e.g. 1.2.3)
+	semverParts := strings.Split(tag, ".")
+	isSemver := false
 
-	// TODO: add these into mappings file
-	return baseFilename == "ubuntu" || baseFilename == "debian" || baseFilename == "fedora"
+	// Consider tags that are just a number (like "9" or "18") as valid semver-like tags
+	if len(semverParts) == 1 {
+		_, err := strconv.Atoi(semverParts[0])
+		if err == nil {
+			isSemver = true
+		}
+	} else if len(semverParts) >= 2 {
+		// Check if at least the first two parts are numeric
+		major, majorErr := strconv.Atoi(semverParts[0])
+		minor, minorErr := strconv.Atoi(semverParts[1])
+		if majorErr == nil && minorErr == nil && major >= 0 && minor >= 0 {
+			isSemver = true
+			// Keep only major.minor for semver tags
+			if len(semverParts) > 2 {
+				tag = fmt.Sprintf("%d.%d", major, minor)
+			}
+		}
+	}
+
+	// If not a semver and not latest, use latest
+	if !isSemver && tag != "latest" {
+		return "latest"
+	}
+
+	return tag
 }
 
 // convertPackageManagerCommands converts package manager commands in a shell command

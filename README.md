@@ -109,16 +109,16 @@ FROM r.example.com/cgr-mirror/<image>
 
 Note: the `--registry` flag takes precedence over the `--org` flag.
 
-### Custom package mappings
+### Custom mappings file
 
-If you need to use a modified version of the default, embedded package map
-file [`packages.yaml`](./packages.yaml), use the `--mappings` flag:
+If you need to use a modified version of the default, embedded mappings
+file [`mappings.yaml`](./mappings.yaml), use the `--mappings` flag:
 
 ```sh
-dfc --mappings="./packages.yaml" ./Dockerfile
+dfc --mappings="./custom-mappings.yaml" ./Dockerfile
 ```
 
-Want to submit an update to the default [`packages.yaml`](./packages.yaml)?
+Want to submit an update to the default [`mappings.yaml`](./mappings.yaml)?
 Please [open a GitHub pull request](https://github.com/chainguard-dev/dfc/compare).
 
 ## Examples
@@ -187,7 +187,7 @@ For each `FROM` line in the Dockerfile, `dfc` attempts to replace the base image
 
 ### `RUN` line modifications
 
-For each `RUN` line in the Dockerfile, `dfc` attempts to detect the use of a known package manager (e.g. `apt-get` / `yum` / `apk`), extract the names of any packages being installed, try to map them via [`packages.yaml`](./packages.yaml), and replacing the old install with  `apk add --no-cache <packages>`.
+For each `RUN` line in the Dockerfile, `dfc` attempts to detect the use of a known package manager (e.g. `apt-get` / `yum` / `apk`), extract the names of any packages being installed, try to map them via the package mappings in [`mappings.yaml`](./mappings.yaml), and replacing the old install with  `apk add --no-cache <packages>`.
 
 ### `USER` line modifications
 
@@ -222,6 +222,55 @@ in the GNU version which is present by default on various distros.
 
 For that reason, we will attempt to convert `tar` commands in `RUN` lines
 using the GNU syntax to use the busybox syntax instead.
+
+## Base image and tag mapping
+
+When converting Dockerfiles, `dfc` applies the following logic to determine which Chainguard Image and tag to use:
+
+### Base Image Mapping
+- Image mappings are defined in the `mappings.yaml` file under the `images` section
+- Each mapping defines a source image name (e.g., `ubuntu`, `nodejs`) and its Chainguard equivalent
+- Glob matching is supported using the asterisk (*) wildcard (e.g., `nodejs*` matches both `nodejs` and `nodejs20-debian12`)
+- If a mapping includes a tag (e.g., `chainguard-base:latest`), that tag is always used
+- If no tag is specified in the mapping (e.g., `node`), tag selection follows the standard tag mapping rules
+- If no mapping is found for a base image, the original name is preserved and tag mapping rules apply
+
+### Tag Mapping
+The tag conversion follows these rules:
+
+1. **For chainguard-base**:
+   - Always uses `latest` tag, regardless of the original tag or presence of RUN commands
+
+2. **For tags containing ARG variables** (like `${NODE_VERSION}`):
+   - Preserves the original variable reference
+   - Adds `-dev` suffix only if the stage contains RUN commands
+   - Example: `FROM node:${NODE_VERSION}` → `FROM cgr.dev/ORG/node:${NODE_VERSION}-dev` (if stage has RUN commands)
+
+3. **For other images**:
+   - If no tag is specified in the original Dockerfile:
+     - Uses `latest-dev` if the stage contains RUN commands
+     - Uses `latest` if the stage has no RUN commands
+   - If a tag is specified:
+     - If it's a semantic version (e.g., `1.2.3` or `v1.2.3`):
+       - Truncates to major.minor only (e.g., `1.2`)
+       - Adds `-dev` suffix only if the stage contains RUN commands
+     - If the tag starts with `v` followed by numbers, the `v` is removed
+     - For non-semver tags (e.g., `alpine`, `slim`):
+       - Uses `latest-dev` if the stage has RUN commands
+       - Uses `latest` if the stage has no RUN commands
+
+This approach ensures that:
+- Development variants (`-dev`) with shell access are only used when needed
+- Semantic version tags are simplified to major.minor for better compatibility
+- The final stage in multi-stage builds uses minimal images without dev tools when possible
+- Build arg variables in tags are preserved with proper `-dev` suffix handling
+
+### Examples
+- `FROM node:14` → `FROM cgr.dev/ORG/node:14-dev` (if stage has RUN commands)
+- `FROM node:14.17.3` → `FROM cgr.dev/ORG/node:14.17-dev` (if stage has RUN commands)
+- `FROM debian:bullseye` → `FROM cgr.dev/ORG/chainguard-base:latest` (always)
+- `FROM golang:1.19-alpine` → `FROM cgr.dev/ORG/go:1.19` (if stage has RUN commands)
+- `FROM node:${VERSION}` → `FROM cgr.dev/ORG/node:${VERSION}-dev` (if stage has RUN commands)
 
 ## JSON mode
 

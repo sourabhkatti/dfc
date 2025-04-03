@@ -2,7 +2,7 @@
 # This Dockerfile demonstrates a multi-stage Go build with package optimization
 
 # Build stage
-FROM cgr.dev/ORG/golang:1.20-dev AS builder
+FROM cgr.dev/ORG/go:1.20-dev AS builder
 USER root
 
 WORKDIR /app
@@ -30,7 +30,7 @@ RUN upx --ultra-brute -qq app && \
     upx -t app
 
 # Final stage
-FROM cgr.dev/ORG/alpine:3.17-dev
+FROM cgr.dev/ORG/chainguard-base:latest
 USER root
 
 # Install any runtime dependencies

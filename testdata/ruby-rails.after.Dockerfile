@@ -2,7 +2,7 @@
 # This Dockerfile demonstrates a Rails app with multi-stage build pattern
 
 # Start from a small, trusted base image with the version pinned down
-FROM cgr.dev/ORG/ruby:2.7.1-dev AS base
+FROM cgr.dev/ORG/ruby:2.7-dev AS base
 USER root
 
 # Install system dependencies required both at runtime and build time
