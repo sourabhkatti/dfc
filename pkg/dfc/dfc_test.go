@@ -1228,7 +1228,7 @@ func TestFullFileConversion(t *testing.T) {
 			want := string(after)
 
 			if diff := cmp.Diff(want, got); diff != "" {
-				t.Errorf("conversion not as expected (-want, +got):\n%s\n", diff)
+				t.Errorf("conversion not as expected (-want, +got):\n%s", diff)
 			}
 		})
 	}
@@ -1783,6 +1783,90 @@ func TestDockerHubFormatHandling(t *testing.T) {
 			// Check the result
 			result := converted.String()
 			result = strings.TrimSpace(result)
+			if result != tc.expectedOutput {
+				t.Errorf("Expected output:\n%s\nActual output:\n%s", tc.expectedOutput, result)
+			}
+		})
+	}
+}
+
+func TestJDKJRETagHandling(t *testing.T) {
+	tests := []struct {
+		name           string
+		dockerfile     string
+		expectedOutput string
+	}{
+		{
+			name: "JDK with version tag and RUN command",
+			dockerfile: `FROM openjdk:21
+RUN apt-get update && apt-get install -y nano`,
+			expectedOutput: `FROM cgr.dev/ORG/jdk:openjdk-21-dev
+USER root
+RUN apk add --no-cache nano`,
+		},
+		{
+			name: "JDK with no tag and RUN command",
+			dockerfile: `FROM openjdk
+RUN apt-get update && apt-get install -y nano`,
+			expectedOutput: `FROM cgr.dev/ORG/jdk:latest-dev
+USER root
+RUN apk add --no-cache nano`,
+		},
+		{
+			name: "JDK with latest tag and RUN command",
+			dockerfile: `FROM openjdk:latest
+RUN apt-get update && apt-get install -y nano`,
+			expectedOutput: `FROM cgr.dev/ORG/jdk:latest-dev
+USER root
+RUN apk add --no-cache nano`,
+		},
+		{
+			name:           "JDK with version tag and no RUN command",
+			dockerfile:     `FROM openjdk:21`,
+			expectedOutput: `FROM cgr.dev/ORG/jdk:openjdk-21`,
+		},
+		{
+			name:           "JDK with no tag and no RUN command",
+			dockerfile:     `FROM openjdk`,
+			expectedOutput: `FROM cgr.dev/ORG/jdk:latest`,
+		},
+		{
+			name: "JRE with version tag and RUN command",
+			dockerfile: `FROM openjdk:21-jre
+RUN apt-get update && apt-get install -y nano`,
+			expectedOutput: `FROM cgr.dev/ORG/jdk:openjdk-21-dev
+USER root
+RUN apk add --no-cache nano`,
+		},
+		{
+			name: "eclipse-temurin with JDK tag and RUN command",
+			dockerfile: `FROM eclipse-temurin:21-jdk
+RUN apt-get update && apt-get install -y nano`,
+			expectedOutput: `FROM cgr.dev/ORG/jdk:openjdk-21-dev
+USER root
+RUN apk add --no-cache nano`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Parse the dockerfile
+			df, err := ParseDockerfile(context.Background(), []byte(tc.dockerfile))
+			if err != nil {
+				t.Fatalf("Error parsing dockerfile: %v", err)
+			}
+
+			// Convert the dockerfile
+			convertedDockerfile, err := df.Convert(context.Background(), Options{})
+			if err != nil {
+				t.Fatalf("Error converting dockerfile: %v", err)
+			}
+
+			// Get the string representation
+			result := convertedDockerfile.String()
+			result = strings.TrimSpace(result)
+
+			// Check the result
 			if result != tc.expectedOutput {
 				t.Errorf("Expected output:\n%s\nActual output:\n%s", tc.expectedOutput, result)
 			}

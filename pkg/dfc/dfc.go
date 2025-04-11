@@ -645,8 +645,14 @@ func convertFromLine(from *FromDetails, stage int, stagesWithRunCommands map[int
 	// FROM index.docker.io/someorg/somerepo
 	var mappedImage string
 
-	// Try exact match first
-	if img, ok := opts.ExtraMappings.Images[base]; ok {
+	// First check for exact match with full image reference including tag
+	fullImageRef := base
+	if tag != "" {
+		fullImageRef += ":" + tag
+	}
+	if img, ok := opts.ExtraMappings.Images[fullImageRef]; ok {
+		mappedImage = img
+	} else if img, ok := opts.ExtraMappings.Images[base]; ok {
 		mappedImage = img
 	} else if img, ok := opts.ExtraMappings.Images[baseFilename]; ok {
 		mappedImage = img
@@ -850,19 +856,22 @@ func calculateConvertedTag(baseFilename string, tag string, isDynamicTag bool, n
 		return "latest" // Always use latest tag for chainguard-base, no -dev suffix ever
 	}
 
-	// Check if tag contains a variable reference (like ${NODE_VERSION})
-	if strings.Contains(tag, "$") {
+	// First process the tag normally (including semantic version truncation)
+	switch {
+	case tag == "":
+		convertedTag = "latest"
+	case strings.Contains(tag, "$"):
 		// For dynamic tags, preserve the original tag
 		convertedTag = tag
-		// Add -dev suffix if needed
-		if needsDevSuffix && !strings.HasSuffix(tag, "-dev") {
-			convertedTag += "-dev"
-		}
-		return convertedTag
+	default:
+		// Convert the tag normally for static tags
+		convertedTag = convertImageTag(tag, isDynamicTag)
 	}
 
-	// Convert the tag normally for static tags
-	convertedTag = convertImageTag(tag, isDynamicTag)
+	// Special case for JDK/JRE - prepend "openjdk-" to the tag unless it's "latest" or "latest-dev"
+	if (baseFilename == "jdk" || baseFilename == "jre") && convertedTag != "latest" && convertedTag != "latest-dev" {
+		convertedTag = "openjdk-" + convertedTag
+	}
 
 	// Add -dev suffix if needed
 	if needsDevSuffix && convertedTag != "latest" {
