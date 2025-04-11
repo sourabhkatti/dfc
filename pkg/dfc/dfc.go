@@ -115,6 +115,7 @@ type FromDetails struct {
 	Parent      int    `json:"parent,omitempty"`
 	BaseDynamic bool   `json:"baseDynamic,omitempty"`
 	TagDynamic  bool   `json:"tagDynamic,omitempty"`
+	Orig        string `json:"orig,omitempty"` // Original full image reference
 }
 
 // RunDetails holds details about a RUN directive
@@ -209,6 +210,9 @@ func ParseDockerfile(_ context.Context, content []byte) (*Dockerfile, error) {
 			// Capture space + AS + space to get exact length
 			asKeywordWithSpaces := " " + KeywordAs + " "
 
+			// Save the original image reference before any parsing
+			var origImageRef string
+
 			// Split by case-insensitive " AS " pattern
 			asParts := strings.Split(strings.ToUpper(fromPart), asKeywordWithSpaces)
 			if len(asParts) > 1 {
@@ -219,11 +223,14 @@ func ParseDockerfile(_ context.Context, content []byte) (*Dockerfile, error) {
 					basePart := strings.TrimSpace(fromPart[:asIndex])
 					aliasPart := strings.TrimSpace(fromPart[asIndex+len(asKeywordWithSpaces):])
 					fromPart = basePart
+					origImageRef = basePart // Capture only the image reference part
 					alias = aliasPart
 
 					// Store this alias for parent references
 					stageAliases[strings.ToLower(alias)] = currentStage
 				}
+			} else {
+				origImageRef = fromPart
 			}
 
 			// Parse the image reference
@@ -258,6 +265,7 @@ func ParseDockerfile(_ context.Context, content []byte) (*Dockerfile, error) {
 				Parent:      parent,
 				BaseDynamic: strings.Contains(base, "$"),
 				TagDynamic:  strings.Contains(tag, "$"),
+				Orig:        origImageRef,
 			}
 		}
 
@@ -381,21 +389,57 @@ func ParseDockerfile(_ context.Context, content []byte) (*Dockerfile, error) {
 	return dockerfile, nil
 }
 
+// PackageMap maps distros to package mappings
+type PackageMap map[Distro]map[string][]string
+
+// FromLineConverter is a function type for custom image reference conversion in FROM directives.
+// It takes a FromDetails struct containing information about the original image and the
+// string that would be produced by the default Chainguard conversion, and allows for customizing
+// the final image reference.
+// The stageHasRun parameter indicates whether the current build stage has at least one RUN directive,
+// which is useful for determining whether to add a "-dev" suffix to the image tag.
+// If an error is returned, the original image reference will be used instead.
+// The converter is only responsible for returning the image reference part (e.g., "cgr.dev/chainguard/node:latest"),
+// not the full FROM line with directives like "AS" - those will be handled by the calling code.
+//
+// Example usage of a custom converter:
+//
+//	myConverter := func(from *FromDetails, converted string, stageHasRun bool) (string, error) {
+//	    // For most images, just use the default Chainguard conversion
+//	    if from.Base != "python" {
+//	        return converted, nil
+//	    }
+//
+//	    // Special handling for python images
+//	    tag := from.Tag
+//	    if stageHasRun && !strings.HasSuffix(tag, "-dev") {
+//	        tag += "-dev"
+//	    }
+//	    return "myregistry.example.com/python:" + tag, nil
+//	}
+//
+//	// Use the custom converter with DFC
+//	dockerFile.Convert(ctx, dfc.Options{
+//	    Organization: "myorg",
+//	    FromLineConverter: myConverter,
+//	})
+type FromLineConverter func(from *FromDetails, converted string, stageHasRun bool) (string, error)
+
 // Options defines the configuration options for the conversion
 type Options struct {
-	Organization string
-	Registry     string
-	Mappings     MappingsConfig
+	Organization      string
+	Registry          string
+	ExtraMappings     MappingsConfig
+	Update            bool              // When true, update cached mappings before conversion
+	NoBuiltIn         bool              // When true, don't use built-in mappings, only ExtraMappings
+	FromLineConverter FromLineConverter // Optional custom converter for FROM lines
 }
 
-// MappingsConfig represents the structure of mappings.yaml
+// MappingsConfig represents the structure of builtin-mappings.yaml
 type MappingsConfig struct {
 	Images   map[string]string `yaml:"images"`
 	Packages PackageMap        `yaml:"packages"`
 }
-
-// PackageMap maps distros to package mappings
-type PackageMap map[Distro]map[string][]string
 
 // parseImageReference extracts base and tag from an image reference
 func parseImageReference(imageRef string) (base, tag string) {
@@ -410,7 +454,38 @@ func parseImageReference(imageRef string) (base, tag string) {
 }
 
 // Convert applies the conversion to the Dockerfile and returns a new converted Dockerfile
-func (d *Dockerfile) Convert(_ context.Context, opts Options) (*Dockerfile, error) {
+func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, error) {
+	// Initialize mappings
+	var mappings MappingsConfig
+
+	// Handle mappings based on options
+	if !opts.NoBuiltIn {
+		// Load the default mappings (unless NoBuiltIn is true)
+		defaultMappings, err := defaultGetDefaultMappings(ctx, opts.Update)
+		if err != nil {
+			return nil, fmt.Errorf("loading default mappings: %w", err)
+		}
+
+		// Use default mappings
+		mappings = defaultMappings
+
+		// Merge with the extra mappings if provided
+		if len(opts.ExtraMappings.Images) > 0 || len(opts.ExtraMappings.Packages) > 0 {
+			mappings = MergeMappings(defaultMappings, opts.ExtraMappings)
+		}
+	} else {
+		// NoBuiltIn is true, use only ExtraMappings if provided
+		// Otherwise, use empty mappings
+		mappings = opts.ExtraMappings
+		// Initialize empty maps if they don't exist
+		if mappings.Images == nil {
+			mappings.Images = make(map[string]string)
+		}
+		if mappings.Packages == nil {
+			mappings.Packages = make(PackageMap)
+		}
+	}
+
 	// Create a new Dockerfile for the converted content
 	converted := &Dockerfile{
 		Lines: make([]*DockerfileLine, len(d.Lines)),
@@ -443,20 +518,34 @@ func (d *Dockerfile) Convert(_ context.Context, opts Options) (*Dockerfile, erro
 
 			// Apply FROM line conversion only for non-dynamic bases
 			if shouldConvertFromLine(line.From) {
-				newLine.Converted = convertFromLine(line.From, line.Stage, stagesWithRunCommands, opts)
+				// Use the merged mappings for conversion
+				optsWithMappings := Options{
+					Organization:      opts.Organization,
+					Registry:          opts.Registry,
+					ExtraMappings:     mappings,
+					FromLineConverter: opts.FromLineConverter,
+				}
+				newLine.Converted = convertFromLine(line.From, line.Stage, stagesWithRunCommands, optsWithMappings)
 			}
 		}
 
 		// Handle ARG lines that are used as base images
 		if line.Arg != nil && line.Arg.UsedAsBase && line.Arg.DefaultValue != "" {
-			argLine, argDetails := convertArgLine(line.Arg, d.Lines, stagesWithRunCommands, opts)
+			// Use the merged mappings for conversion
+			optsWithMappings := Options{
+				Organization:      opts.Organization,
+				Registry:          opts.Registry,
+				ExtraMappings:     mappings,
+				FromLineConverter: opts.FromLineConverter,
+			}
+			argLine, argDetails := convertArgLine(line.Arg, d.Lines, stagesWithRunCommands, optsWithMappings)
 			newLine.Converted = argLine
 			newLine.Arg = argDetails
 		}
 
 		// Process RUN commands
 		if line.Run != nil && line.Run.Shell != nil && line.Run.Shell.Before != nil {
-			processRunLine(newLine, line, stagePackages, opts.Mappings.Packages)
+			processRunLine(newLine, line, stagePackages, mappings.Packages)
 		}
 
 		// Add the converted line to the result
@@ -521,11 +610,13 @@ func copyFromDetails(from *FromDetails) *FromDetails {
 		Parent:      from.Parent,
 		BaseDynamic: from.BaseDynamic,
 		TagDynamic:  from.TagDynamic,
+		Orig:        from.Orig,
 	}
 }
 
 // convertFromLine handles converting a FROM line
 func convertFromLine(from *FromDetails, stage int, stagesWithRunCommands map[int]bool, opts Options) string {
+	// First, always do the default Chainguard conversion
 	// Determine if we need the -dev suffix
 	needsDevSuffix := stagesWithRunCommands[stage]
 
@@ -540,31 +631,75 @@ func convertFromLine(from *FromDetails, stage int, stagesWithRunCommands map[int
 	targetImage := baseFilename
 	var convertedTag string
 
-	// Check for exact match first
-	if mappedImage, ok := opts.Mappings.Images[baseFilename]; ok {
+	// Check for exact match first, in specific order
+	// For example, if the mapping is just node, it should match all of the following:
+	// FROM registry-1.docker.io/library/node
+	// FROM docker.io/node
+	// FROM docker.io/library/node
+	// FROM index.docker.io/node
+	// FROM index.docker.io/library/node
+	//
+	// If the mapping is someorg/somerepo, it should match all of the following:
+	// FROM registry-1.docker.io/someorg/somerepo
+	// FROM docker.io/someorg/somerepo
+	// FROM index.docker.io/someorg/somerepo
+	var mappedImage string
+
+	// Try exact match first
+	if img, ok := opts.ExtraMappings.Images[base]; ok {
+		mappedImage = img
+	} else if img, ok := opts.ExtraMappings.Images[baseFilename]; ok {
+		mappedImage = img
+	} else {
+		// Generate all possible variants for the base image
+		baseVariants := generateDockerHubVariants(base)
+
+		// Check if any variant matches a key in the mappings
+		for _, variant := range baseVariants {
+			if img, ok := opts.ExtraMappings.Images[variant]; ok {
+				mappedImage = img
+				break
+			}
+		}
+
+		// If still no match, try to normalize the base and check against simple keys
+		if mappedImage == "" {
+			normalizedBase := normalizeImageName(base)
+
+			// Check if the normalized base matches any key
+			if img, ok := opts.ExtraMappings.Images[normalizedBase]; ok {
+				mappedImage = img
+			} else if strings.HasPrefix(normalizedBase, "library/") {
+				// Try removing library/ prefix if it exists
+				simpleBase := strings.TrimPrefix(normalizedBase, "library/")
+				if img, ok := opts.ExtraMappings.Images[simpleBase]; ok {
+					mappedImage = img
+				}
+			}
+		}
+
+		// If still no match, check for glob patterns with asterisks
+		if mappedImage == "" {
+			for pattern, img := range opts.ExtraMappings.Images {
+				if strings.HasSuffix(pattern, "*") {
+					prefix := strings.TrimSuffix(pattern, "*")
+					if strings.HasPrefix(baseFilename, prefix) {
+						mappedImage = img
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Process the mapped image if found
+	if mappedImage != "" {
 		// Check if the mapped image includes a tag
 		if parts := strings.Split(mappedImage, ":"); len(parts) > 1 {
 			targetImage = parts[0]
 			convertedTag = parts[1]
 		} else {
 			targetImage = mappedImage
-		}
-	} else {
-		// No exact match, check for glob patterns with asterisks
-		for pattern, mappedImage := range opts.Mappings.Images {
-			if strings.HasSuffix(pattern, "*") {
-				prefix := strings.TrimSuffix(pattern, "*")
-				if strings.HasPrefix(baseFilename, prefix) {
-					// Found a match with a glob pattern
-					if parts := strings.Split(mappedImage, ":"); len(parts) > 1 {
-						targetImage = parts[0]
-						convertedTag = parts[1]
-					} else {
-						targetImage = mappedImage
-					}
-					break
-				}
-			}
 		}
 	}
 
@@ -574,10 +709,30 @@ func convertFromLine(from *FromDetails, stage int, stagesWithRunCommands map[int
 	}
 
 	// Build the image reference
-	newImageRef := buildImageReference(targetImage, convertedTag, opts)
+	chainguardImageRef := buildImageReference(targetImage, convertedTag, opts)
 
-	// Create the converted FROM line
-	fromLine := DirectiveFrom + " " + newImageRef
+	// Now, if a custom converter is provided, let it process the result
+	if opts.FromLineConverter != nil {
+		customImageRef, err := opts.FromLineConverter(from, chainguardImageRef, stagesWithRunCommands[stage])
+		if err != nil {
+			// If an error occurs, still return a valid FROM line using the original image
+			fromLine := DirectiveFrom + " " + from.Orig
+			if from.Alias != "" {
+				fromLine += " " + KeywordAs + " " + from.Alias
+			}
+			return fromLine
+		}
+
+		// Create the converted FROM line with the custom image
+		fromLine := DirectiveFrom + " " + customImageRef
+		if from.Alias != "" {
+			fromLine += " " + KeywordAs + " " + from.Alias
+		}
+		return fromLine
+	}
+
+	// If no custom converter, use the Chainguard converted reference
+	fromLine := DirectiveFrom + " " + chainguardImageRef
 	if from.Alias != "" {
 		fromLine += " " + KeywordAs + " " + from.Alias
 	}
@@ -587,13 +742,21 @@ func convertFromLine(from *FromDetails, stage int, stagesWithRunCommands map[int
 
 // convertArgLine handles converting an ARG line used as base image
 func convertArgLine(arg *ArgDetails, lines []*DockerfileLine, stagesWithRunCommands map[int]bool, opts Options) (string, *ArgDetails) {
-	// Get ARG default value image reference
+	// Create a FromDetails structure from the ARG default value
 	base, tag := parseImageReference(arg.DefaultValue)
+
+	// Create a FromDetails to represent this ARG value as a FROM line
+	fromDetails := &FromDetails{
+		Base: base,
+		Tag:  tag,
+		Orig: arg.DefaultValue,
+	}
 
 	// Determine if we need the -dev suffix
 	needsDevSuffix := determineIfArgNeedsDevSuffix(arg.Name, lines, stagesWithRunCommands)
 
-	// Handle the basename
+	// First perform the default Chainguard conversion
+	// Calculate default image reference using common approach
 	baseFilename := filepath.Base(base)
 
 	// Get the appropriate Chainguard image name using mappings
@@ -601,7 +764,7 @@ func convertArgLine(arg *ArgDetails, lines []*DockerfileLine, stagesWithRunComma
 	var convertedTag string
 
 	// Check for exact match first
-	if mappedImage, ok := opts.Mappings.Images[baseFilename]; ok {
+	if mappedImage, ok := opts.ExtraMappings.Images[baseFilename]; ok {
 		// Check if the mapped image includes a tag
 		if parts := strings.Split(mappedImage, ":"); len(parts) > 1 {
 			targetImage = parts[0]
@@ -611,7 +774,7 @@ func convertArgLine(arg *ArgDetails, lines []*DockerfileLine, stagesWithRunComma
 		}
 	} else {
 		// No exact match, check for glob patterns with asterisks
-		for pattern, mappedImage := range opts.Mappings.Images {
+		for pattern, mappedImage := range opts.ExtraMappings.Images {
 			if strings.HasSuffix(pattern, "*") {
 				prefix := strings.TrimSuffix(pattern, "*")
 				if strings.HasPrefix(baseFilename, prefix) {
@@ -634,15 +797,32 @@ func convertArgLine(arg *ArgDetails, lines []*DockerfileLine, stagesWithRunComma
 	}
 
 	// Build the image reference
-	newDefaultValue := buildImageReference(targetImage, convertedTag, opts)
+	chainguardImageRef := buildImageReference(targetImage, convertedTag, opts)
+
+	// Get the converted image reference
+	var finalImageRef string
+
+	// If a custom FROM line converter is provided, use it
+	if opts.FromLineConverter != nil {
+		customImageRef, err := opts.FromLineConverter(fromDetails, chainguardImageRef, needsDevSuffix)
+		if err != nil {
+			// On error, use the original value
+			finalImageRef = arg.DefaultValue
+		} else {
+			finalImageRef = customImageRef
+		}
+	} else {
+		// Use the default converter result
+		finalImageRef = chainguardImageRef
+	}
 
 	// Create the converted ARG line
-	argLine := DirectiveArg + " " + arg.Name + "=" + newDefaultValue
+	argLine := DirectiveArg + " " + arg.Name + "=" + finalImageRef
 
 	// Create the Arg details
 	argDetails := &ArgDetails{
 		Name:         arg.Name,
-		DefaultValue: newDefaultValue,
+		DefaultValue: finalImageRef,
 		UsedAsBase:   true,
 	}
 
@@ -1078,4 +1258,64 @@ func convertBusyboxCommands(shell *ShellCommand, stagePackages []string) (bool, 
 	}
 
 	return false, shell
+}
+
+// generateDockerHubVariants generates all possible Docker Hub variants for a given base
+func generateDockerHubVariants(base string) []string {
+	variants := []string{base}
+
+	// Check if base already has a registry prefix
+	if strings.Contains(base, "/") && strings.Contains(base, ".") {
+		// It's already a fully qualified name, don't generate additional variants
+		return variants
+	}
+
+	// Split the base to handle different cases
+	parts := strings.Split(base, "/")
+	var imageName string
+	var org string
+
+	// Handle different formats
+	if len(parts) == 1 {
+		// Format: "node"
+		imageName = parts[0]
+		variants = append(variants,
+			"docker.io/"+imageName,
+			"docker.io/library/"+imageName,
+			"registry-1.docker.io/library/"+imageName,
+			"index.docker.io/"+imageName,
+			"index.docker.io/library/"+imageName)
+	} else if len(parts) == 2 {
+		// Format: "someorg/someimage"
+		org = parts[0]
+		imageName = parts[1]
+		variants = append(variants,
+			"docker.io/"+org+"/"+imageName,
+			"registry-1.docker.io/"+org+"/"+imageName,
+			"index.docker.io/"+org+"/"+imageName)
+	}
+
+	return variants
+}
+
+// normalizeImageName normalizes Docker Hub image references
+func normalizeImageName(imageRef string) string {
+	// Remove any trailing slashes
+	imageRef = strings.TrimRight(imageRef, "/")
+
+	// Docker Hub registry domains to strip
+	dockerHubDomains := []string{
+		"registry-1.docker.io/",
+		"docker.io/",
+		"index.docker.io/",
+	}
+
+	// Remove Docker Hub registry prefixes if present
+	for _, domain := range dockerHubDomains {
+		if strings.HasPrefix(imageRef, domain) {
+			return strings.TrimPrefix(imageRef, domain)
+		}
+	}
+
+	return imageRef
 }
