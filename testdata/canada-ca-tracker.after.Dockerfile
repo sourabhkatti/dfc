@@ -9,7 +9,7 @@ COPY . .
 
 RUN npm ci && npm run build && npm prune --production
 
-FROM cgr.dev/ORG/node:latest-dev
+FROM cgr.dev/ORG/node:latest
 
 ENV HOST 0.0.0.0
 ENV PORT 3000
