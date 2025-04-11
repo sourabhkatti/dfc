@@ -227,6 +227,8 @@ packages:
             - s3fs-fuse
         uuid-runtime:
             - util-linux-misc
+        watch:
+            - procps
         xz-utils:
             - xz
         zlib1g-dev:
