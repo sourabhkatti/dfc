@@ -152,6 +152,8 @@ packages:
             - fuse-common
         g++:
             - gcc
+        gettext-base:
+            - gettext
         git-delta:
             - delta
         gnupg2:
