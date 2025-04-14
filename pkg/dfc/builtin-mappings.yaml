@@ -225,6 +225,9 @@ packages:
             - py3-pyopenssl
         s3fs:
             - s3fs-fuse
+        ssh:
+            - openssh-client
+            - openssh-server
         uuid-runtime:
             - util-linux-misc
         watch:
