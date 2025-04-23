@@ -70,6 +70,11 @@ const (
 	DefaultChainguardBase = "chainguard-base"
 )
 
+// Other
+const (
+	ApkNoCacheFlag = "--no-cache"
+)
+
 // PackageManagerInfo holds metadata about a package manager
 type PackageManagerInfo struct {
 	Distro         Distro
@@ -1079,99 +1084,173 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 	var firstPMInstallIndex = -1
 	packagesDetected := []string{}
 	packagesToInstall := []string{}
+	hasPackageManager := false
+	hasNonPackageManagerCommands := false
 
-	// Process all shell parts in one pass
+	// Identify package manager and collect packages
 	for i, part := range shell.Parts {
-		if Manager(part.Command) == firstPM || (firstPM == "" && PackageManagerInfoMap[Manager(part.Command)].Distro != "") {
+		// Check if this is a package manager command
+		if pmInfo := PackageManagerInfoMap[Manager(part.Command)]; pmInfo.Distro != "" {
+			// We found a package manager command
+			hasPackageManager = true
+
 			// Set the package manager if it's the first one we've found
 			if firstPM == "" {
 				firstPM = Manager(part.Command)
-				distro = PackageManagerInfoMap[firstPM].Distro
+				distro = pmInfo.Distro
 			}
 
-			// Check if this is an install command by finding the install keyword
-			pmInfo := PackageManagerInfoMap[firstPM]
-			installKeywordIndex := -1
-
-			// Find the index of the install keyword in arguments
-			for j, arg := range part.Args {
-				if arg == pmInfo.InstallKeyword {
-					installKeywordIndex = j
-					break
-				}
-			}
-
-			// If we found the install keyword, process the command
-			if installKeywordIndex >= 0 {
-				if firstPMInstallIndex == -1 {
-					firstPMInstallIndex = i
+			// Only process install commands from the first package manager we encounter
+			if Manager(part.Command) == firstPM {
+				// Check if this is an install command by finding the install keyword
+				installKeywordIndex := -1
+				// Find the index of the install keyword in arguments
+				for j, arg := range part.Args {
+					if arg == pmInfo.InstallKeyword {
+						installKeywordIndex = j
+						break
+					}
 				}
 
-				// Collect packages, applying mapping if available
-				// Start from after the install keyword
-				for _, arg := range part.Args[installKeywordIndex+1:] {
-					if !strings.HasPrefix(arg, "-") {
-						packagesDetected = append(packagesDetected, arg)
+				// If we found the install keyword, process the command
+				if installKeywordIndex >= 0 {
+					if firstPMInstallIndex == -1 {
+						firstPMInstallIndex = i
+					}
 
-						if distroMap, exists := packageMap[distro]; exists && distroMap[arg] != nil {
-							packagesToInstall = append(packagesToInstall, distroMap[arg]...)
-						} else {
-							packagesToInstall = append(packagesToInstall, arg)
+					// Collect packages, applying mapping if available
+					// Start from after the install keyword
+					for _, arg := range part.Args[installKeywordIndex+1:] {
+						if !strings.HasPrefix(arg, "-") {
+							packagesDetected = append(packagesDetected, arg)
+
+							if distroMap, exists := packageMap[distro]; exists && distroMap[arg] != nil {
+								packagesToInstall = append(packagesToInstall, distroMap[arg]...)
+							} else {
+								packagesToInstall = append(packagesToInstall, arg)
+							}
 						}
 					}
 				}
 			}
+		} else {
+			// This is not a package manager command
+			hasNonPackageManagerCommands = true
 		}
 	}
 
-	// If we have no packages to install, nothing to do
-	if len(packagesToInstall) == 0 || firstPMInstallIndex == -1 {
+	// If we don't have any package manager commands, return the original shell
+	if !hasPackageManager {
 		return false, distro, firstPM, nil, nil, shell
 	}
 
 	// Sort and deduplicate packages
 	slices.Sort(packagesDetected)
 	packagesDetected = slices.Compact(packagesDetected)
-	slices.Sort(packagesToInstall)
-	packagesToInstall = slices.Compact(packagesToInstall)
 
-	// Create new shell parts, preserving the original order
+	// Sort and deduplicate packages for installation
+	// Create a map to deduplicate first
+	packagesMap := make(map[string]bool)
+	for _, pkg := range packagesToInstall {
+		packagesMap[pkg] = true
+	}
+
+	// Clear the package list
+	packagesToInstall = []string{}
+
+	// Add packages back to the list in sorted order
+	for pkg := range packagesMap {
+		packagesToInstall = append(packagesToInstall, pkg)
+	}
+	slices.Sort(packagesToInstall)
+
+	// If we only have package manager commands and no non-PM commands,
+	// and we found packages to install, convert it to just an apk add command
+	if !hasNonPackageManagerCommands && len(packagesToInstall) > 0 {
+		// Return a simple apk add command
+		return true, distro, firstPM, packagesDetected, packagesToInstall, &ShellCommand{
+			Parts: []*ShellPart{
+				{
+					Command: string(ManagerApk),
+					Args:    append([]string{SubcommandAdd, ApkNoCacheFlag}, packagesToInstall...),
+				},
+			},
+		}
+	}
+
+	// If we only have package manager commands but no packages to install,
+	// return a simple "true" command
+	if !hasNonPackageManagerCommands && len(packagesToInstall) == 0 {
+		return true, distro, firstPM, packagesDetected, packagesToInstall, &ShellCommand{
+			Parts: []*ShellPart{
+				{
+					Command: "true",
+				},
+			},
+		}
+	}
+
+	// Create a new shell command with parts
 	newParts := make([]*ShellPart, 0, len(shell.Parts))
 
-	// Add parts before the first package manager install command (non-PM only)
-	for i := 0; i < firstPMInstallIndex; i++ {
-		if Manager(shell.Parts[i].Command) != firstPM {
-			newParts = append(newParts, cloneShellPart(shell.Parts[i]))
-		}
+	// Track if we've already inserted the apk add command
+	apkAdded := false
+
+	// Create the apk add part to be inserted at the right position
+	apkPart := &ShellPart{
+		Command: string(ManagerApk),
+		Args:    append([]string{SubcommandAdd, ApkNoCacheFlag}, packagesToInstall...),
 	}
 
-	// Add the apk add command
-	delimiter := ""
-	if firstPMInstallIndex < len(shell.Parts)-1 {
-		delimiter = shell.Parts[firstPMInstallIndex].Delimiter
-	}
-	newParts = append(newParts, &ShellPart{
-		ExtraPre:  shell.Parts[firstPMInstallIndex].ExtraPre,
-		Command:   "apk",
-		Args:      append([]string{"add", "--no-cache"}, packagesToInstall...),
-		Delimiter: delimiter,
-	})
+	// Process parts in the original order
+	for i, part := range shell.Parts {
+		if Manager(part.Command) == firstPM {
+			// This is a package manager command, possibly replace with apk add
 
-	// Add remaining parts (non-PM only)
-	for i := firstPMInstallIndex + 1; i < len(shell.Parts); i++ {
-		if Manager(shell.Parts[i].Command) != firstPM {
-			part := cloneShellPart(shell.Parts[i])
-			// Last part should have no delimiter
-			if i == len(shell.Parts)-1 {
-				part.Delimiter = ""
+			// If this is the first package manager install command and we haven't added apk yet
+			if i == firstPMInstallIndex && !apkAdded && len(packagesToInstall) > 0 {
+				// Copy the delimiter and extra parts from the original command
+				apkPart.Delimiter = part.Delimiter
+				apkPart.ExtraPre = part.ExtraPre
+
+				// Add the apk add command at this position
+				newParts = append(newParts, apkPart)
+				apkAdded = true
 			}
-			newParts = append(newParts, part)
+			// Skip this package manager command (don't add it to newParts)
+		} else {
+			// This is not a package manager command, keep it
+			newPart := cloneShellPart(part)
+			newParts = append(newParts, newPart)
 		}
 	}
 
-	// Fix the last delimiter
+	// If we didn't add the apk add command yet (because firstPMInstallIndex wasn't found or was at end)
+	// and we have packages to install, add it at the end
+	if !apkAdded && len(packagesToInstall) > 0 && len(newParts) > 0 {
+		// Set delimiter on the last part
+		newParts[len(newParts)-1].Delimiter = "&&"
+		newParts = append(newParts, apkPart)
+	} else if !apkAdded && len(packagesToInstall) > 0 {
+		// No parts added yet but we have packages - just add the apk part
+		newParts = append(newParts, apkPart)
+	}
+
+	// Fix delimiters: ensure the last part has no delimiter
 	if len(newParts) > 0 {
 		newParts[len(newParts)-1].Delimiter = ""
+
+		// Also fix any consecutive delimiters
+		for i := 0; i < len(newParts)-1; i++ {
+			if newParts[i].Delimiter == "" {
+				newParts[i].Delimiter = "&&"
+			}
+		}
+	} else {
+		// If no parts remain, use a simple "true" command
+		newParts = append(newParts, &ShellPart{
+			Command: "true",
+		})
 	}
 
 	return true, distro, firstPM, packagesDetected, packagesToInstall, &ShellCommand{Parts: newParts}
