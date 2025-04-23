@@ -5,7 +5,7 @@
 FROM cgr.dev/ORG/chainguard-base:latest AS builder-image
 USER root
 
-RUN apk add --no-cache build-base python3-pip python3-wheel python3.9 python3.9-dev python3.9-venv && \
+RUN apk add --no-cache build-base py3-pip py3-wheel python3.9 python3.9-dev python3.9-venv && \
     rm -rf /var/lib/apt/lists/*
 
 # create and activate virtual environment

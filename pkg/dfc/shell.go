@@ -62,8 +62,8 @@ func ParseMultilineShell(raw string) *ShellCommand {
 		return nil
 	}
 
-	// Known delimiters
-	delimiters := []string{"&&", "||", ";", "|", "&"}
+	// Known delimiters - removed pipe ("|") from the list
+	delimiters := []string{"&&", "||", ";", "&"}
 
 	var parts []*ShellPart
 	remainingCmd := strings.TrimSpace(cleaned)

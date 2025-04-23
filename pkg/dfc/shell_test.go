@@ -20,7 +20,7 @@ func TestShellParsing(t *testing.T) {
 	}
 	cases := []testCase{}
 
-	for _, delimiter := range []string{"&&", "||", ";", "|"} { // TODO: constant for these?
+	for _, delimiter := range []string{"&&", "||", ";"} { // Removed "|" from delimiters
 		cases = append(cases, testCase{
 			name:     "basic " + delimiter,
 			raw:      `echo hello ` + delimiter + ` echo world`,
@@ -221,6 +221,36 @@ func TestShellParsing(t *testing.T) {
 			},
 		})
 	}
+
+	// Add specific test case for pipe commands
+	cases = append(cases, testCase{
+		name:     "pipe-commands-as-single-command",
+		raw:      `apt-get -s dist-upgrade | grep "^Inst" | grep -i securi | awk -F " " {'print $2'} | xargs apt-get install --yes`,
+		expected: `apt-get -s dist-upgrade | grep "^Inst" | grep -i securi | awk -F " " {'print $2'} | xargs apt-get install --yes`,
+		wantCommand: &ShellCommand{
+			Parts: []*ShellPart{
+				{
+					Command: "apt-get",
+					Args:    []string{"-s", "dist-upgrade", "|", "grep", `"^Inst"`, "|", "grep", "-i", "securi", "|", "awk", "-F", `" "`, "{'print $2'}", "|", "xargs", "apt-get", "install", "--yes"},
+				},
+			},
+		},
+	})
+
+	// Add real-world test case for pipes.before.Dockerfile example
+	cases = append(cases, testCase{
+		name:     "real-world-pipes-example",
+		raw:      `apt-get -s dist-upgrade | grep "^Inst" | grep -i securi | awk -F " " {'print $2'} | xargs apt-get install --yes`,
+		expected: `apt-get -s dist-upgrade | grep "^Inst" | grep -i securi | awk -F " " {'print $2'} | xargs apt-get install --yes`,
+		wantCommand: &ShellCommand{
+			Parts: []*ShellPart{
+				{
+					Command: "apt-get",
+					Args:    []string{"-s", "dist-upgrade", "|", "grep", `"^Inst"`, "|", "grep", "-i", "securi", "|", "awk", "-F", `" "`, "{'print $2'}", "|", "xargs", "apt-get", "install", "--yes"},
+				},
+			},
+		},
+	})
 
 	cases = append(cases, testCase{
 		name: "real world - django  ",
