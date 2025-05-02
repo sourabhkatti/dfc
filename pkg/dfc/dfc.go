@@ -989,7 +989,6 @@ func processRunLineWithConverter(newLine *DockerfileLine, line *DockerfileLine, 
 			defaultConverted = DirectiveRun + " " + afterShell.String()
 		}
 
-		// If a custom RunLineConverter is provided, use it
 		if runLineConverter != nil {
 			custom, err := runLineConverter(newLine.Run, defaultConverted, line.Stage)
 			if err == nil && custom != "" {
@@ -997,7 +996,6 @@ func processRunLineWithConverter(newLine *DockerfileLine, line *DockerfileLine, 
 				return
 			}
 		}
-		// Otherwise, use the default
 		newLine.Converted = defaultConverted
 	}
 }

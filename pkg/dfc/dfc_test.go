@@ -1873,3 +1873,42 @@ RUN apk add --no-cache nano`,
 		})
 	}
 }
+
+func TestRunLineConverter(t *testing.T) {
+	dockerfileContent := `FROM node
+RUN apt-get update && apt-get install -y nano
+RUN echo hello world`
+
+	ctx := context.Background()
+	dockerfile, err := ParseDockerfile(ctx, []byte(dockerfileContent))
+	if err != nil {
+		t.Fatalf("ParseDockerfile(): %v", err)
+	}
+
+	myRunConverter := func(run *RunDetails, converted string, stage int) (string, error) {
+		if run.Manager == ManagerAptGet {
+			return "RUN echo 'apt-get is not allowed!'", nil
+		}
+		return converted, nil
+	}
+
+	converted, err := dockerfile.Convert(ctx, Options{
+		RunLineConverter: myRunConverter,
+	})
+	if err != nil {
+		t.Fatalf("dockerfile.Convert(): %v", err)
+	}
+
+	lines := strings.Split(converted.String(), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("Expected at least 3 lines, got %d", len(lines))
+	}
+
+	output := converted.String()
+	if !strings.Contains(output, "RUN echo 'apt-get is not allowed!'") {
+		t.Errorf("Expected apt-get RUN to be replaced, got: %s", output)
+	}
+	if !strings.Contains(output, "RUN echo hello world") {
+		t.Errorf("Expected normal RUN to be preserved, got: %s", output)
+	}
+}
