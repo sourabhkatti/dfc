@@ -430,6 +430,24 @@ type PackageMap map[Distro]map[string][]string
 //	})
 type FromLineConverter func(from *FromDetails, converted string, stageHasRun bool) (string, error)
 
+// RunLineConverter is a function type for custom RUN line conversion.
+// It takes a RunDetails struct (parsed info about the RUN line), the string that would be produced by the default conversion,
+// and the build stage number. It returns the string to use for the RUN line, or an error to fall back to the default.
+//
+// Example usage:
+//
+//  myRunConverter := func(run *RunDetails, converted string, stage int) (string, error) {
+//      if run.Manager == "apt-get" {
+//          return "RUN echo 'apt-get is not allowed!'", nil
+//      }
+//      return converted, nil
+//  }
+//
+//  dockerFile.Convert(ctx, dfc.Options{
+//      RunLineConverter: myRunConverter,
+//  })
+type RunLineConverter func(run *RunDetails, converted string, stage int) (string, error)
+
 // Options defines the configuration options for the conversion
 type Options struct {
 	Organization      string
@@ -438,6 +456,7 @@ type Options struct {
 	Update            bool              // When true, update cached mappings before conversion
 	NoBuiltIn         bool              // When true, don't use built-in mappings, only ExtraMappings
 	FromLineConverter FromLineConverter // Optional custom converter for FROM lines
+	RunLineConverter  RunLineConverter  // Optional custom converter for RUN lines
 }
 
 // MappingsConfig represents the structure of builtin-mappings.yaml
@@ -529,6 +548,7 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 					Registry:          opts.Registry,
 					ExtraMappings:     mappings,
 					FromLineConverter: opts.FromLineConverter,
+					RunLineConverter:  opts.RunLineConverter,
 				}
 				newLine.Converted = convertFromLine(line.From, line.Stage, stagesWithRunCommands, optsWithMappings)
 			}
@@ -542,6 +562,7 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 				Registry:          opts.Registry,
 				ExtraMappings:     mappings,
 				FromLineConverter: opts.FromLineConverter,
+				RunLineConverter:  opts.RunLineConverter,
 			}
 			argLine, argDetails := convertArgLine(line.Arg, d.Lines, stagesWithRunCommands, optsWithMappings)
 			newLine.Converted = argLine
@@ -550,7 +571,7 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 
 		// Process RUN commands
 		if line.Run != nil && line.Run.Shell != nil && line.Run.Shell.Before != nil {
-			processRunLine(newLine, line, stagePackages, mappings.Packages)
+			processRunLineWithConverter(newLine, line, stagePackages, mappings.Packages, opts.RunLineConverter)
 		}
 
 		// Add the converted line to the result
@@ -914,8 +935,8 @@ func buildImageReference(baseFilename string, tag string, opts Options) string {
 	return newBase
 }
 
-// processRunLine handles the conversion of RUN lines
-func processRunLine(newLine *DockerfileLine, line *DockerfileLine, stagePackages map[int][]string, packageMap PackageMap) {
+// processRunLineWithConverter handles the conversion of RUN lines but supports a RunLineConverter.
+func processRunLineWithConverter(newLine *DockerfileLine, line *DockerfileLine, stagePackages map[int][]string, packageMap PackageMap, runLineConverter RunLineConverter) {
 	beforeShell := line.Run.Shell.Before
 
 	// Initialize RunDetails with Before shell
@@ -958,14 +979,26 @@ func processRunLine(newLine *DockerfileLine, line *DockerfileLine, stagePackages
 		runPrefix := DirectiveRun + " "
 		runIndex := strings.Index(upperRawLine, runPrefix)
 
+		var defaultConverted string
 		if runIndex != -1 {
 			// Get the original case of the RUN directive
 			originalRunDirective := rawLine[runIndex : runIndex+len(runPrefix)]
-			newLine.Converted = originalRunDirective + afterShell.String()
+			defaultConverted = originalRunDirective + afterShell.String()
 		} else {
 			// Fallback if we can't find the directive (shouldn't happen)
-			newLine.Converted = DirectiveRun + " " + afterShell.String()
+			defaultConverted = DirectiveRun + " " + afterShell.String()
 		}
+
+		// If a custom RunLineConverter is provided, use it
+		if runLineConverter != nil {
+			custom, err := runLineConverter(newLine.Run, defaultConverted, line.Stage)
+			if err == nil && custom != "" {
+				newLine.Converted = custom
+				return
+			}
+		}
+		// Otherwise, use the default
+		newLine.Converted = defaultConverted
 	}
 }
 
