@@ -997,10 +997,7 @@ func processRunLineWithConverter(newLine *DockerfileLine, line *DockerfileLine, 
 			if err != nil {
 				return err
 			}
-			if custom != "" {
-				newLine.Converted = custom
-				return nil
-			}
+			newLine.Converted = custom
 		}
 		newLine.Converted = defaultConverted
 	}
