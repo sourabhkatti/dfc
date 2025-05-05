@@ -571,7 +571,10 @@ func (d *Dockerfile) Convert(ctx context.Context, opts Options) (*Dockerfile, er
 
 		// Process RUN commands
 		if line.Run != nil && line.Run.Shell != nil && line.Run.Shell.Before != nil {
-			processRunLineWithConverter(newLine, line, stagePackages, mappings.Packages, opts.RunLineConverter)
+			err := processRunLineWithConverter(newLine, line, stagePackages, mappings.Packages, opts.RunLineConverter)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// Add the converted line to the result
@@ -936,7 +939,7 @@ func buildImageReference(baseFilename string, tag string, opts Options) string {
 }
 
 // processRunLineWithConverter handles the conversion of RUN lines but supports a RunLineConverter.
-func processRunLineWithConverter(newLine *DockerfileLine, line *DockerfileLine, stagePackages map[int][]string, packageMap PackageMap, runLineConverter RunLineConverter) {
+func processRunLineWithConverter(newLine *DockerfileLine, line *DockerfileLine, stagePackages map[int][]string, packageMap PackageMap, runLineConverter RunLineConverter) error {
 	beforeShell := line.Run.Shell.Before
 
 	// Initialize RunDetails with Before shell
@@ -991,13 +994,17 @@ func processRunLineWithConverter(newLine *DockerfileLine, line *DockerfileLine, 
 
 		if runLineConverter != nil {
 			custom, err := runLineConverter(newLine.Run, defaultConverted, line.Stage)
-			if err == nil && custom != "" {
+			if err != nil {
+				return err
+			}
+			if custom != "" {
 				newLine.Converted = custom
-				return
+				return nil
 			}
 		}
 		newLine.Converted = defaultConverted
 	}
+	return nil
 }
 
 // addUserRootDirectives adds USER root directives where needed

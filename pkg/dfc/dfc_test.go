@@ -7,6 +7,7 @@ package dfc
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1910,5 +1911,24 @@ RUN echo hello world`
 	}
 	if !strings.Contains(output, "RUN echo hello world") {
 		t.Errorf("Expected normal RUN to be preserved, got: %s", output)
+	}
+
+	// New test: error propagation from RunLineConverter
+	dockerfileContentErr := `FROM node
+RUN apt-get update && apt-get install -y nano`
+	dockerfileErr, err := ParseDockerfile(ctx, []byte(dockerfileContentErr))
+	if err != nil {
+		t.Fatalf("ParseDockerfile(): %v", err)
+	}
+
+	errRunConverter := func(run *RunDetails, converted string, stage int) (string, error) {
+		return "", fmt.Errorf("custom run line error")
+	}
+
+	_, err = dockerfileErr.Convert(ctx, Options{
+		RunLineConverter: errRunConverter,
+	})
+	if err == nil || !strings.Contains(err.Error(), "custom run line error") {
+		t.Errorf("Expected error from RunLineConverter to be propagated, got: %v", err)
 	}
 }
