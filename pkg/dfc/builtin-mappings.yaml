@@ -149,6 +149,8 @@ packages:
             - build-base
         fonts-liberation:
             - font-liberation
+        fonts-open-sans:
+            - font-opensans
         fuse:
             - fuse2
             - fuse-common
