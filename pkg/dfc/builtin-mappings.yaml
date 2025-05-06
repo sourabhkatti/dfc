@@ -170,6 +170,8 @@ packages:
             - glibc-dev
         libc6-dev:
             - glibc-dev
+        libcairo2:
+            - cairo
         libcurl4-openssl-dev:
             - curl-dev
         libgssapi-krb5-2:
