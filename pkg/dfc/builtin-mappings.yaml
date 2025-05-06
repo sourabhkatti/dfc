@@ -246,6 +246,10 @@ packages:
             - util-linux-misc
         watch:
             - procps
+        xfonts-utils:
+            - font-util
+            - mkfontscale
+            - bdftopcf
         xz-utils:
             - xz
         zlib1g-dev:
