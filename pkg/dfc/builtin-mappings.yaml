@@ -166,6 +166,8 @@ packages:
             - glibc-dev
         libc6-dev:
             - glibc-dev
+        libcups2:
+            - cups-libs
         libcurl4-openssl-dev:
             - curl-dev
         libgssapi-krb5-2:
