@@ -172,6 +172,8 @@ packages:
             - glibc-dev
         libcairo2:
             - cairo
+        libcups2:
+            - cups-libs
         libcurl4-openssl-dev:
             - curl-dev
         libgssapi-krb5-2:
