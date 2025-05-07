@@ -7,6 +7,7 @@ package dfc
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1871,5 +1872,63 @@ RUN apk add --no-cache nano`,
 				t.Errorf("Expected output:\n%s\nActual output:\n%s", tc.expectedOutput, result)
 			}
 		})
+	}
+}
+
+func TestRunLineConverter(t *testing.T) {
+	dockerfileContent := `FROM node
+RUN apt-get update && apt-get install -y nano
+RUN echo hello world`
+
+	ctx := context.Background()
+	dockerfile, err := ParseDockerfile(ctx, []byte(dockerfileContent))
+	if err != nil {
+		t.Fatalf("ParseDockerfile(): %v", err)
+	}
+
+	myRunConverter := func(run *RunDetails, converted string, _ int) (string, error) {
+		if run.Manager == ManagerAptGet {
+			return "RUN echo 'apt-get is not allowed!'", nil
+		}
+		return converted, nil
+	}
+
+	converted, err := dockerfile.Convert(ctx, Options{
+		RunLineConverter: myRunConverter,
+	})
+	if err != nil {
+		t.Fatalf("dockerfile.Convert(): %v", err)
+	}
+
+	lines := strings.Split(converted.String(), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("Expected at least 3 lines, got %d", len(lines))
+	}
+
+	output := converted.String()
+	if !strings.Contains(output, "RUN echo 'apt-get is not allowed!'") {
+		t.Errorf("Expected apt-get RUN to be replaced, got: %s", output)
+	}
+	if !strings.Contains(output, "RUN echo hello world") {
+		t.Errorf("Expected normal RUN to be preserved, got: %s", output)
+	}
+
+	// New test: error propagation from RunLineConverter
+	dockerfileContentErr := `FROM node
+RUN apt-get update && apt-get install -y nano`
+	dockerfileErr, err := ParseDockerfile(ctx, []byte(dockerfileContentErr))
+	if err != nil {
+		t.Fatalf("ParseDockerfile(): %v", err)
+	}
+
+	errRunConverter := func(_ *RunDetails, _ string, _ int) (string, error) {
+		return "", fmt.Errorf("custom run line error")
+	}
+
+	_, err = dockerfileErr.Convert(ctx, Options{
+		RunLineConverter: errRunConverter,
+	})
+	if err == nil || !strings.Contains(err.Error(), "custom run line error") {
+		t.Errorf("Expected error from RunLineConverter to be propagated, got: %v", err)
 	}
 }
