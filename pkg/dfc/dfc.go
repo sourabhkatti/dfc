@@ -998,8 +998,9 @@ func processRunLineWithConverter(newLine *DockerfileLine, line *DockerfileLine, 
 				return err
 			}
 			newLine.Converted = custom
+		} else {
+			newLine.Converted = defaultConverted
 		}
-		newLine.Converted = defaultConverted
 	}
 	return nil
 }
