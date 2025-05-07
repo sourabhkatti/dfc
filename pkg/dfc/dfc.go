@@ -436,16 +436,16 @@ type FromLineConverter func(from *FromDetails, converted string, stageHasRun boo
 //
 // Example usage:
 //
-//  myRunConverter := func(run *RunDetails, converted string, stage int) (string, error) {
-//      if run.Manager == "apt-get" {
-//          return "RUN echo 'apt-get is not allowed!'", nil
-//      }
-//      return converted, nil
-//  }
+//	myRunConverter := func(run *RunDetails, converted string, stage int) (string, error) {
+//	    if run.Manager == "apt-get" {
+//	        return "RUN echo 'apt-get is not allowed!'", nil
+//	    }
+//	    return converted, nil
+//	}
 //
-//  dockerFile.Convert(ctx, dfc.Options{
-//      RunLineConverter: myRunConverter,
-//  })
+//	dockerFile.Convert(ctx, dfc.Options{
+//	    RunLineConverter: myRunConverter,
+//	})
 type RunLineConverter func(run *RunDetails, converted string, stage int) (string, error)
 
 // Options defines the configuration options for the conversion
