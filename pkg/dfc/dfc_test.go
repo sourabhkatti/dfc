@@ -1886,7 +1886,7 @@ RUN echo hello world`
 		t.Fatalf("ParseDockerfile(): %v", err)
 	}
 
-	myRunConverter := func(run *RunDetails, converted string, stage int) (string, error) {
+	myRunConverter := func(run *RunDetails, converted string, _ int) (string, error) {
 		if run.Manager == ManagerAptGet {
 			return "RUN echo 'apt-get is not allowed!'", nil
 		}
@@ -1921,7 +1921,7 @@ RUN apt-get update && apt-get install -y nano`
 		t.Fatalf("ParseDockerfile(): %v", err)
 	}
 
-	errRunConverter := func(run *RunDetails, converted string, stage int) (string, error) {
+	errRunConverter := func(_ *RunDetails, _ string, _ int) (string, error) {
 		return "", fmt.Errorf("custom run line error")
 	}
 
