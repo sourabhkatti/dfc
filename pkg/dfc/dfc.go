@@ -37,6 +37,12 @@ const (
 	ManagerApt      Manager = "apt"
 )
 
+// Package manager Commands
+const (
+	CommandAddAptRepository = "add-apt-repository"
+	CommandAptAddRepository = "apt-add-repository"
+)
+
 // User management commands and packages
 const (
 	CommandUserAdd  = "useradd"
@@ -77,20 +83,30 @@ const (
 
 // PackageManagerInfo holds metadata about a package manager
 type PackageManagerInfo struct {
-	Distro         Distro
-	InstallKeyword string
+	Distro             Distro
+	InstallKeyword     string
+	AssociatedCommands []string
 }
 
 // PackageManagerInfoMap maps package managers to their metadata
 var PackageManagerInfoMap = map[Manager]PackageManagerInfo{
-	ManagerAptGet: {Distro: DistroDebian, InstallKeyword: SubcommandInstall},
-	ManagerApt:    {Distro: DistroDebian, InstallKeyword: SubcommandInstall},
+	ManagerAptGet: {Distro: DistroDebian, InstallKeyword: SubcommandInstall, AssociatedCommands: []string{CommandAddAptRepository, CommandAptAddRepository}},
+	ManagerApt:    {Distro: DistroDebian, InstallKeyword: SubcommandInstall, AssociatedCommands: []string{CommandAddAptRepository, CommandAptAddRepository}},
 
 	ManagerYum:      {Distro: DistroFedora, InstallKeyword: SubcommandInstall},
 	ManagerDnf:      {Distro: DistroFedora, InstallKeyword: SubcommandInstall},
 	ManagerMicrodnf: {Distro: DistroFedora, InstallKeyword: SubcommandInstall},
 
 	ManagerApk: {Distro: DistroAlpine, InstallKeyword: SubcommandAdd},
+}
+
+type PackageSpec struct {
+	Manager        Manager
+	Name           string
+	Tag            string
+	VersionMatcher string
+	Version        string
+	Release        string
 }
 
 // DockerfileLine represents a single line in a Dockerfile
@@ -1159,12 +1175,9 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 					for _, arg := range part.Args[installKeywordIndex+1:] {
 						if !strings.HasPrefix(arg, "-") {
 							packagesDetected = append(packagesDetected, arg)
-
-							if distroMap, exists := packageMap[distro]; exists && distroMap[arg] != nil {
-								packagesToInstall = append(packagesToInstall, distroMap[arg]...)
-							} else {
-								packagesToInstall = append(packagesToInstall, arg)
-							}
+							packageSpec := parsePackageSpec(firstPM, arg)
+							packages := convertPackage(packageSpec, distro, packageMap)
+							packagesToInstall = append(packagesToInstall, packages...)
 						}
 					}
 				}
@@ -1238,6 +1251,8 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 		Args:    append([]string{SubcommandAdd, ApkNoCacheFlag}, packagesToInstall...),
 	}
 
+	firstPMInfo := PackageManagerInfoMap[firstPM]
+
 	// Process parts in the original order
 	for i, part := range shell.Parts {
 		if Manager(part.Command) == firstPM {
@@ -1254,8 +1269,8 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 				apkAdded = true
 			}
 			// Skip this package manager command (don't add it to newParts)
-		} else if !isPackageManagerCleanupCommand(part) {
-			// This is not a package manager command, keep it
+		} else if !slices.Contains(firstPMInfo.AssociatedCommands, part.Command) && !isPackageManagerCleanupCommand(part) {
+			// This is not a package manager command or associated command, keep it
 			newPart := cloneShellPart(part)
 			newParts = append(newParts, newPart)
 		}
@@ -1459,4 +1474,81 @@ func isPackageManagerCleanupCommand(part *ShellPart) bool {
 		}
 	}
 	return false
+}
+
+var ApkVersionMatchers = []string{"~=", "=~", "~", "=", ">", "<"}
+
+// parseApkVersion splits the apk package string by version matcher
+func parseApkVersion(pkg string) (before string, after string, matcher string) {
+	for _, m := range ApkVersionMatchers {
+		if b, a, found := strings.Cut(pkg, m); found {
+			return b, a, m
+		}
+	}
+	return pkg, "", ""
+}
+
+// parsePackageSpec parses package manager argument.
+func parsePackageSpec(manager Manager, packageArg string) (spec PackageSpec) {
+	spec.Manager = manager
+	switch manager {
+	case ManagerApk:
+		// https://wiki.alpinelinux.org/wiki/Alpine_Package_Keeper#Add_a_Package
+		spec.Name, spec.Tag, _ = strings.Cut(packageArg, "@")
+		if spec.Tag == "" {
+			spec.Name, spec.Version, spec.VersionMatcher = parseApkVersion(spec.Name)
+		} else {
+			spec.Tag, spec.Version, spec.VersionMatcher = parseApkVersion(spec.Tag)
+		}
+		spec.Version, spec.Release, _ = strings.Cut(spec.Version, "-")
+	case ManagerApt, ManagerAptGet:
+		spec.Name, spec.Version, _ = strings.Cut(packageArg, "=")
+		spec.Version, spec.Release, _ = strings.Cut(spec.Version, "-")
+		if spec.Version != "" {
+			spec.VersionMatcher = "="
+		}
+	case ManagerDnf, ManagerMicrodnf, ManagerYum:
+		// Format is name-version-release
+		// But the problem is the name can also have `-` so not sure
+		// if there is a reliable way to parse out the parts. Punt for now.
+		fallthrough
+	default:
+		spec.Name = packageArg
+	}
+
+	return spec
+}
+
+// convertPackage performs a lookup of a given package in the package map and returns a valid apk package parameter.
+func convertPackage(spec PackageSpec, distro Distro, packageMap PackageMap) []string {
+	var packages []string
+	if distroMap, exists := packageMap[distro]; exists && distroMap[spec.Name] != nil {
+		for _, pkg := range distroMap[spec.Name] {
+			packages = append(packages, createApkPackageSpec(pkg, spec))
+		}
+	} else {
+		packages = append(packages, createApkPackageSpec(spec.Name, spec))
+	}
+	return packages
+}
+
+// createApkPackageSpec formats an apk package parameter. The following adjustments will be made to align with
+// chainguard best practices:
+// - Drop release specifier
+// - Force fuzzy matching (= -> =~)
+func createApkPackageSpec(name string, spec PackageSpec) string {
+	pkg := name
+	if spec.Tag != "" {
+		pkg += "@" + spec.Tag
+	}
+
+	if spec.Version != "" {
+		matcher := spec.VersionMatcher
+		if spec.Manager != ManagerApk || matcher == "=" {
+			matcher = "=~"
+		}
+		pkg += matcher + spec.Version
+	}
+
+	return pkg
 }
