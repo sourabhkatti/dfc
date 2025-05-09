@@ -1269,7 +1269,7 @@ func convertPackageManagerCommands(shell *ShellCommand, packageMap PackageMap) (
 				apkAdded = true
 			}
 			// Skip this package manager command (don't add it to newParts)
-		} else if !slices.Contains(firstPMInfo.AssociatedCommands, part.Command) {
+		} else if !slices.Contains(firstPMInfo.AssociatedCommands, part.Command) && !isPackageManagerCleanupCommand(part) {
 			// This is not a package manager command or associated command, keep it
 			newPart := cloneShellPart(part)
 			newParts = append(newParts, newPart)
@@ -1457,6 +1457,23 @@ func normalizeImageName(imageRef string) string {
 	}
 
 	return imageRef
+}
+
+var packageManagerRemoveCacheArgs = [][]string{
+	{"-rf", "/var/lib/apt/lists/*"},
+	{"-rf", "/var/cache/yum/*"},
+}
+
+// isPackageManagerCleanupCommand checks if the shell command is a known package manager cleanup command.
+func isPackageManagerCleanupCommand(part *ShellPart) bool {
+	if part.Command == "rm" {
+		for _, args := range packageManagerRemoveCacheArgs {
+			if slices.Equal(part.Args, args) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var ApkVersionMatchers = []string{"~=", "=~", "~", "=", ">", "<"}
