@@ -366,20 +366,35 @@ func ConvertDockerfileToApko(dockerfile *dfc.Dockerfile) (map[string]*ApkoConfig
 		switch instruction {
 		case "RUN":
 			if line.Run != nil && line.Run.Shell != nil && line.Run.Shell.Before != nil {
+				// Build the command string - use the converted command if available
 				var cmdBuilder strings.Builder
-				for _, part := range line.Run.Shell.Before.Parts {
-					cmdBuilder.WriteString(part.Command)
-					if len(part.Args) > 0 {
-						cmdBuilder.WriteString(" ")
-						cmdBuilder.WriteString(strings.Join(part.Args, " "))
+				if line.Converted != "" {
+					// Use the converted command string, skipping the "RUN " prefix
+					if strings.HasPrefix(line.Converted, "RUN ") {
+						cmdBuilder.WriteString(strings.TrimPrefix(line.Converted, "RUN "))
+					} else {
+						cmdBuilder.WriteString(line.Converted)
 					}
-					if part.Delimiter != "" {
-						cmdBuilder.WriteString(" ")
-						cmdBuilder.WriteString(part.Delimiter)
-						cmdBuilder.WriteString(" ")
+				} else {
+					// Fall back to original command if no conversion available
+					for _, part := range line.Run.Shell.Before.Parts {
+						cmdBuilder.WriteString(part.Command)
+						if len(part.Args) > 0 {
+							cmdBuilder.WriteString(" ")
+							cmdBuilder.WriteString(strings.Join(part.Args, " "))
+						}
+						if part.Delimiter != "" {
+							cmdBuilder.WriteString(" ")
+							cmdBuilder.WriteString(part.Delimiter)
+							cmdBuilder.WriteString(" ")
+						}
 					}
 				}
 				cmd := cmdBuilder.String()
+
+				if Debug {
+					log.Printf("DEBUG: Using command for package parsing: [%s]", cmd)
+				}
 
 				pkgs := parsePackageInstall(cmd)
 				for _, pkg := range pkgs {
