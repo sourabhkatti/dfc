@@ -123,8 +123,20 @@ func main() {
 		// No need to print the converted Dockerfile when using direct-apko
 		log.Println("Converting directly to apko overlay")
 
+		// Parse the original Dockerfile again
+		originalDockerfile, err := dfc.ParseDockerfile(ctx, input)
+		if err != nil {
+			log.Fatalf("Failed to parse Dockerfile for direct-apko: %v", err)
+		}
+
+		// Convert to Chainguard format specifically for apko
+		convertedForApko, err := originalDockerfile.Convert(ctx, opts)
+		if err != nil {
+			log.Fatalf("Failed to convert Dockerfile for direct-apko: %v", err)
+		}
+
 		// Convert the Chainguard Dockerfile to apko overlay
-		stageConfigs, err := apko.ConvertDockerfileToApko(converted)
+		stageConfigs, err := apko.ConvertDockerfileToApko(convertedForApko)
 		if err != nil {
 			log.Fatalf("Failed to convert to apko format for direct-apko: %v", err)
 		}
@@ -177,7 +189,7 @@ func main() {
 			if err := os.WriteFile(finalApkoPath, []byte(currentApkoYAML), 0644); err != nil {
 				log.Fatalf("Failed to write apko YAML for stage '%s' to %s in direct-apko: %v", stageName, finalApkoPath, err)
 			}
-			log.Printf("Generated Apko overlay directly from original Dockerfile for stage '%s' to %s", stageName, finalApkoPath)
+			log.Printf("Generated apko overlay for stage '%s' to %s", stageName, finalApkoPath)
 		}
 
 		// Exit without printing the Chainguard Dockerfile
